@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-retry-advanced",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "BB's provider retry plus automatic resume of turns that failed because the network or provider path was unreachable.",
   "license": "MIT",

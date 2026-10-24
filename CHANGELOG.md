@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Packaging: ship the built `dist/` in the repository, so BB Git installs load the reviewed bundle.
+  No code change.
+
 ## 0.1.0
 
 First release. A fork of BB's bundled Provider retry plugin (get-bb/bb, `desktop-v0.46.1`).

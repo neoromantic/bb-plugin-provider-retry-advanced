@@ -1,1 +1,3 @@
 node_modules/
+# BB Git installs load the built bundle; keep dist/ even if a global gitignore drops it.
+!dist/
