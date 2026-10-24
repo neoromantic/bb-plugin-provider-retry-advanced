@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <title>bb provider-retry-advanced status: turns waiting for connectivity and resumed ones (made-up data)</title>
+  <rect width="1600" height="1000" fill="#0f1115"/>
+  <rect x="80" y="80" width="1440" height="840" rx="18" fill="#181b22" stroke="#2a2f3a"/>
+  <circle cx="122" cy="122" r="9" fill="#ff5f57"/>
+  <circle cx="152" cy="122" r="9" fill="#febc2e"/>
+  <circle cx="182" cy="122" r="9" fill="#28c840"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="27" fill="#d7dae0">
+    <text x="130" y="210"><tspan fill="#7aa2f7">$</tspan> bb provider-retry-advanced status</text>
+    <text x="130" y="262" fill="#9aa1ad">No provider retries are pending.</text>
+    <text x="130" y="314" fill="#9aa1ad">Connectivity recovery (scanned 2026-05-14T09:41:00.000Z):</text>
+    <text x="130" y="366">thr_demo1x  <tspan fill="#e0af68">waiting</tspan>  waiting-for-connectivity (chatgpt: ETIMEDOUT)</text>
+    <text x="130" y="418">thr_demo2y  <tspan fill="#e0af68">waiting</tspan>  waiting-for-connectivity (anthropic: ETIMEDOUT)  1 background task(s) open</text>
+    <text x="130" y="470">thr_demo3z  <tspan fill="#9aa1ad">skipped</tspan>  held</text>
+    <text x="130" y="570"><tspan fill="#7aa2f7">$</tspan> bb provider-retry-advanced status   <tspan fill="#5c6370"># one minute later</tspan></text>
+    <text x="130" y="622" fill="#9aa1ad">Connectivity recovery (scanned 2026-05-14T09:42:00.000Z):</text>
+    <text x="130" y="674">thr_demo1x  <tspan fill="#9ece6a">resumed</tspan>  resumed</text>
+    <text x="130" y="726">thr_demo2y  <tspan fill="#9ece6a">resumed</tspan>  resumed  1 background task(s) open</text>
+    <text x="130" y="778">thr_demo3z  <tspan fill="#9aa1ad">skipped</tspan>  held</text>
+    <text x="130" y="866" fill="#5c6370"># resumed = core's native retry: same session, model and effort; "Please continue."</text>
+  </g>
+</svg>

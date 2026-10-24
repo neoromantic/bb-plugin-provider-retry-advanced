@@ -1,0 +1,21 @@
+Provider retry advanced
+
+This plugin is a derived work of the "Provider retry" plugin from BB
+(https://github.com/get-bb/bb), directory plugins/provider-retry at tag
+desktop-v0.46.1 (tree 411eac54ac16d0a3cb57d1de8396d37564884a73),
+Copyright (c) 2026 Michael Yong, released under the MIT License (see LICENSE).
+
+Unchanged from upstream:
+  src/retry-policy.ts, src/retry-contract.ts, src/queued-retries.ts,
+  src/diagnostics.ts
+Modified from upstream (marked at the top of each file):
+  server.ts, src/cli.ts, test/stock.test.ts (ported from server.test.ts)
+New in this fork:
+  src/transport.ts, src/probe.ts, src/recovery.ts, test/fake-core.ts,
+  test/recovery.test.ts, test/transport.test.ts, test/review-cases.test.ts, test/reviewer-refresh.test.ts,
+  test/setup.ts,
+  skills/provider-retry-advanced/SKILL.md
+
+test/fake-core.ts restates BB core's retry rules from bb-app 0.46.1
+(server/src/services/threads/turn-retry.ts, turn-failed.ts), same license.
+The fork's additions are released under the same MIT License.
