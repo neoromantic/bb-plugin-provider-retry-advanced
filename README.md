@@ -80,8 +80,7 @@ bb provider-retry-advanced scan [--json]                 # run the scan now
 withdraws the thread's queued retries from this plugin and blocks overload and limit retries.
 Whoever pauses a thread outside BB's own stop is responsible for holding it and releasing it.
 A turn cut off by a BB restart or update is resumed too; to keep a thread paused across a planned
-restart, stop it or hold it first. Stopping a thread that has already failed leaves it in `error`
-in BB, so it does not prevent recovery; hold or cancel it instead.
+restart, stop it or hold it first.
 
 Settings:
 

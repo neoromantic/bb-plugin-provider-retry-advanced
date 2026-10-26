@@ -51,10 +51,6 @@ failed turn chain (read from its events) is not the one the retry was queued
 for. Until that chain has been read — right after a load or a new failure —
 the retry waits; it never runs on an unknown state.
 
-Stopping a thread that has already failed releases its runtime but leaves it
-in `error` with the same failed turn, and BB records nothing the plugin could
-read as a stop. Such a thread is still recovered; hold or cancel it instead.
-
 These are separate checks, not one transaction. A hold or stop that arrives
 after the hook let an attempt through does not undo it: that turn runs, and
 you stop it like any other. A user's explicit Send-now on a queued row skips
