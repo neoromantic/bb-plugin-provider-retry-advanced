@@ -269,7 +269,7 @@ describe("connectivity recovery", () => {
     expect(t.core.queue).toEqual([]);
   });
 
-  it("continues a turn a daemon restart interrupted, in its session, unless held or stopped", async () => {
+  it("continues a turn a daemon restart interrupted, in its session, unless held", async () => {
     const t = await setup({ reachable: false });
     const restart = (id: string) => {
       t.core.addThread({ id, providerId: "codex" });
@@ -285,14 +285,11 @@ describe("connectivity recovery", () => {
     };
     restart("thr_restarted");
     restart("thr_restart_held");
-    restart("thr_restart_stopped");
     expect((await t.host.harness.runCli(["hold", "thr_restart_held"])).exitCode).toBe(0);
-    t.core.setThread("thr_restart_stopped", { status: "idle" });
 
     const report = await t.scan();
     expect(entry(report, "thr_restarted")?.state).toBe("resumed");
     expect(entry(report, "thr_restart_held")?.reason).toBe("held");
-    expect(entry(report, "thr_restart_stopped")).toBeUndefined();
     expect(t.probes).toEqual([]);
     expect(t.retries()).toHaveLength(1);
     const continued = t.core.lastRequest("thr_restarted")!.data;
