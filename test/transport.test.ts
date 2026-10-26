@@ -62,6 +62,17 @@ describe("classifyFailedTurn", () => {
     expect(
       classifyFailedTurn({
         providerId: "pi",
+        events: [{ seq: 1, type: "system/thread/interrupted", data: { reason: "host-daemon-restarted" } }],
+      }),
+    ).toEqual({ kind: "transport", route: { kind: "host" }, signal: "host-daemon-restarted" });
+    for (const reason of ["manual-stop", "host-removed", "provider-turn-idle"]) {
+      expect(
+        classifyFailedTurn({ providerId: "codex", events: [{ seq: 1, type: "system/thread/interrupted", data: { reason } }] }),
+      ).toEqual({ kind: "other", reason: `interrupted:${reason}` });
+    }
+    expect(
+      classifyFailedTurn({
+        providerId: "pi",
         events: [
           { seq: 1, type: "provider/error", data: { detail: "fetch failed", errorInfo: { category: "connection-failed", providerCode: null, httpStatusCode: null } } },
         ],

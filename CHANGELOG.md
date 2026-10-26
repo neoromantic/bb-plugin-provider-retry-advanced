@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- Resumes a turn interrupted because the thread's host daemon restarted (for example by a BB update
+  or a machine restart), not only when the connection to the machine was lost. It goes through the
+  same native host wait and core retry, in the same session. User stops, removed machines and idle
+  provider turns are still not resumed; hold or stop a thread before a planned restart to keep it
+  paused.
+
 ## 0.1.1
 
 - Packaging: ship the built `dist/` in the repository, so BB Git installs load the reviewed bundle.

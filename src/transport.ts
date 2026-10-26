@@ -89,7 +89,8 @@ function categoryOf(data: ProviderErrorData): string {
  * and can emit more errors after the turn ended, from work the turn left
  * running, so the error that actually ended the turn is the one before the
  * completion. A lost machine has no provider error; core records it as an
- * interruption caused by `host-connection-lost`.
+ * interruption: `host-connection-lost` when the connection dropped, or a bare
+ * `host-daemon-restarted` when the machine came back with a new daemon.
  */
 export function classifyFailedTurn(args: {
   providerId: string;
@@ -100,6 +101,9 @@ export function classifyFailedTurn(args: {
     const data = (interrupted.data ?? {}) as { reason?: unknown; cause?: unknown };
     if (data.cause === "host-connection-lost") {
       return { kind: "transport", route: { kind: "host" }, signal: "host-connection-lost" };
+    }
+    if (data.reason === "host-daemon-restarted") {
+      return { kind: "transport", route: { kind: "host" }, signal: "host-daemon-restarted" };
     }
     return { kind: "other", reason: `interrupted:${text(data.reason) || "unknown"}` };
   }

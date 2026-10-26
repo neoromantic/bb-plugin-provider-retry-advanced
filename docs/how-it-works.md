@@ -14,7 +14,9 @@
    unclassified error says the path was unreachable (Account Pooler "could not
    reach", `ETIMEDOUT`, `ECONNRESET`, `fetch failed`, "Connection error", ...).
    A provider's own 500, auth, billing, quota and overload errors do not
-   count. A turn interrupted by `host-connection-lost` counts too.
+   count. A turn interrupted because the server lost the thread's machine
+   counts too: `host-connection-lost`, or `host-daemon-restarted` (the
+   machine came back with a new daemon, for example after a BB update).
 3. For the providers those turns need it sends one HEAD request to
    `https://api.anthropic.com/v1/messages` or
    `https://chatgpt.com/backend-api/codex/responses`, without credentials.

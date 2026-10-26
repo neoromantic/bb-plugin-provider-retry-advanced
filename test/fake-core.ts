@@ -179,7 +179,7 @@ export class FakeCore {
       reason,
       ...(cause === undefined ? {} : { cause }),
     });
-    this.setThread(threadId, { status: reason === "manual-stop" ? "idle" : "error" });
+    this.setThread(threadId, { status: reason === "manual-stop" || reason === "host-removed" ? "idle" : "error" });
   }
 
   completeTurn(threadId: string): void {

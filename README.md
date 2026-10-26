@@ -37,8 +37,9 @@ From then on it checks when it loads and 60 seconds after each scan.
 ## Features
 
 - Resumes turns that failed for lost connectivity: `connection-failed`, `stream-disconnected`,
-  Account Pooler "could not reach", socket timeouts and resets, or a lost connection to the
-  thread's machine. A provider's own 5xx, auth, billing, quota and overload errors do not count.
+  Account Pooler "could not reach", socket timeouts and resets, a lost connection to the
+  thread's machine, or a restart of its host daemon. A provider's own 5xx, auth, billing, quota
+  and overload errors do not count.
 - Probes before it retries: one unauthenticated HEAD to the provider's API. An answer below 500
   only shows the API edge is reachable, not that your account or Account Pooler is healthy. No
   token, model or usage call; with nothing waiting it sends nothing.
@@ -56,7 +57,7 @@ From then on it checks when it loads and 60 seconds after each scan.
 | Provider overload | retried, delay doubles, max 4 | same, unchanged |
 | Subscription-window limit | retried after the reset, `maximumWait` | same, unchanged |
 | Connection failed, stream disconnected, Account Pooler "could not reach", socket timeout/reset | not retried | resumed once the provider answers again |
-| Connection to the thread's machine lost | not retried | queued until the machine reconnects |
+| Connection to the thread's machine lost, or its host daemon restarted | not retried | queued until the machine reconnects |
 | Failures from before the plugin loaded | no | yes, found by the first scan |
 | Attempt limit for connectivity failures | – | none |
 | Backoff for connectivity failures | – | none, fixed 60 s scan |
@@ -78,6 +79,8 @@ bb provider-retry-advanced scan [--json]                 # run the scan now
 `explain` shows reasons such as `waiting-for-connectivity (anthropic: ETIMEDOUT)`. A hold also
 withdraws the thread's queued retries from this plugin and blocks overload and limit retries.
 Whoever pauses a thread outside BB's own stop is responsible for holding it and releasing it.
+A turn cut off by a BB restart or update is resumed too; to keep a thread paused across a planned
+restart, stop it or hold it first.
 
 Settings:
 
