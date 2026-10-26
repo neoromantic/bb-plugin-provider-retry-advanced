@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-provider-retry-advanced",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "BB's provider retry plus automatic resume of turns that failed because the network or provider path was unreachable.",
   "license": "MIT",
@@ -44,6 +44,6 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "bun test",
-    "bundle": "bb plugin build ."
+    "bundle": "bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
   }
 }

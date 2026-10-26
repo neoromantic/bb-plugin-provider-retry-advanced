@@ -183,14 +183,17 @@ describe("connectivity recovery", () => {
     expect(t.probes).toEqual([]);
   });
 
-  it("does not resume user stops, daemon restarts, archived, deleted, held, cancelled, pending-approval or workflow-engine threads", async () => {
+  it("does not resume user stops, removed machines, idle provider turns, archived, deleted, held, cancelled, pending-approval or workflow-engine threads", async () => {
     const t = await setup();
     t.core.addThread({ id: "thr_stopped", providerId: "claude-code" });
     t.core.startTurn("thr_stopped", { input: [], execution: OPUS_ULTRACODE });
     t.core.interruptTurn("thr_stopped", "manual-stop");
-    t.core.addThread({ id: "thr_restart", providerId: "claude-code" });
-    t.core.startTurn("thr_restart", { input: [], execution: OPUS_ULTRACODE });
-    t.core.interruptTurn("thr_restart", "host-daemon-restarted");
+    t.core.addThread({ id: "thr_removed", providerId: "claude-code" });
+    t.core.startTurn("thr_removed", { input: [], execution: OPUS_ULTRACODE });
+    t.core.interruptTurn("thr_removed", "host-removed");
+    t.core.addThread({ id: "thr_idle", providerId: "claude-code" });
+    t.core.startTurn("thr_idle", { input: [], execution: OPUS_ULTRACODE });
+    t.core.interruptTurn("thr_idle", "provider-turn-idle");
     failedThread(t.core, "thr_archived");
     t.core.setThread("thr_archived", { archivedAt: t.core.now });
     failedThread(t.core, "thr_deleted");
@@ -208,7 +211,8 @@ describe("connectivity recovery", () => {
     const report = await t.scan();
     expect(t.retries()).toEqual([]);
     expect(entry(report, "thr_stopped")).toBeUndefined();
-    expect(entry(report, "thr_restart")?.reason).toBe("interrupted:host-daemon-restarted");
+    expect(entry(report, "thr_removed")).toBeUndefined();
+    expect(entry(report, "thr_idle")?.reason).toBe("interrupted:provider-turn-idle");
     expect(entry(report, "thr_archived")).toBeUndefined();
     expect(entry(report, "thr_deleted")).toBeUndefined();
     expect(entry(report, "thr_held")?.reason).toBe("held");
@@ -263,6 +267,36 @@ describe("connectivity recovery", () => {
     await t.core.setHostOnline("host_remote", true);
     expect(t.core.thread("thr_remote").status).toBe("active");
     expect(t.core.queue).toEqual([]);
+  });
+
+  it("continues a turn a daemon restart interrupted, in its session, unless held", async () => {
+    const t = await setup({ reachable: false });
+    const restart = (id: string) => {
+      t.core.addThread({ id, providerId: "codex" });
+      t.core.startTurn(id, { input: [{ type: "text", text: ORIGINAL_TASK, mentions: [] }], execution: CODEX_HIGH });
+      // Core's events for a machine that came back with a new daemon (no `cause`).
+      t.core.append(id, "turn/completed", { providerThreadId: `session-${id}`, status: "interrupted" });
+      t.core.append(id, "system/error", {
+        code: "thread_command_failed",
+        message: "Thread interrupted because the host daemon disconnected",
+        detail: "Please retry the thread to continue.",
+      });
+      t.core.interruptTurn(id, "host-daemon-restarted");
+    };
+    restart("thr_restarted");
+    restart("thr_restart_held");
+    expect((await t.host.harness.runCli(["hold", "thr_restart_held"])).exitCode).toBe(0);
+
+    const report = await t.scan();
+    expect(entry(report, "thr_restarted")?.state).toBe("resumed");
+    expect(entry(report, "thr_restart_held")?.reason).toBe("held");
+    expect(t.probes).toEqual([]);
+    expect(t.retries()).toHaveLength(1);
+    const continued = t.core.lastRequest("thr_restarted")!.data;
+    expect(continued.execution).toEqual(CODEX_HIGH);
+    expect(continued.input).toEqual([
+      { type: "text", text: CONTINUE_ACCEPTED_TURN_TEXT, mentions: [], visibility: "agent-only" },
+    ]);
   });
 
   it("removes only its own stale row when the thread moved on, and honours a user's cancelled row", async () => {

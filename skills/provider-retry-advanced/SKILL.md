@@ -15,7 +15,8 @@ subscription-window limit (retried shortly after the reported reset; the
 It adds connectivity recovery. A Codex or Claude Code turn that failed because
 the provider could not be reached (connection failed, stream disconnected,
 Account Pooler "could not reach", socket timeouts and resets) or because the
-server lost the thread's machine is resumed once the path answers again:
+server lost the thread's machine (connection lost, or its host daemon
+restarted) is resumed once the path answers again:
 
 - A scan runs when the plugin loads and then 60 seconds after each scan ends. It reads the
   current failed threads, so failures from before installation are included.

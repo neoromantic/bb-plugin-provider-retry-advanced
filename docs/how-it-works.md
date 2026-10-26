@@ -14,7 +14,9 @@
    unclassified error says the path was unreachable (Account Pooler "could not
    reach", `ETIMEDOUT`, `ECONNRESET`, `fetch failed`, "Connection error", ...).
    A provider's own 500, auth, billing, quota and overload errors do not
-   count. A turn interrupted by `host-connection-lost` counts too.
+   count. A turn interrupted because the server lost the thread's machine
+   counts too: `host-connection-lost`, or `host-daemon-restarted` (the
+   machine came back with a new daemon, for example after a BB update).
 3. For the providers those turns need it sends one HEAD request to
    `https://api.anthropic.com/v1/messages` or
    `https://chatgpt.com/backend-api/codex/responses`, without credentials.
@@ -48,6 +50,13 @@ thread is no longer in `error` (stopped, answered, recovered), or its current
 failed turn chain (read from its events) is not the one the retry was queued
 for. Until that chain has been read — right after a load or a new failure —
 the retry waits; it never runs on an unknown state.
+
+Stopping a thread that has already failed releases its runtime but leaves it
+in `error` with the same failed turn. BB records no stop for it: the most it
+leaves is a background task marked `stopped`, which BB also writes for other
+interruptions, so it does not mean the user stopped the thread. Such a thread
+is still recovered; hold or cancel it instead. A stop while the turn is still
+running is recorded as `manual-stop` and is never recovered.
 
 These are separate checks, not one transaction. A hold or stop that arrives
 after the hook let an attempt through does not undo it: that turn runs, and

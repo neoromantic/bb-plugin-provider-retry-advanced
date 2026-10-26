@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+- Resumes a turn interrupted because the thread's host daemon restarted (for example by a BB update
+  or a machine restart), not only when the connection to the machine was lost. It goes through the
+  same native host wait and core retry, in the same session. User stops, removed machines and idle
+  provider turns are still not resumed; hold or stop a thread before a planned restart to keep it
+  paused.
+- Known limit, as for every connectivity failure since 0.1.0: stopping a thread that has already
+  failed does not prevent recovery, because BB records no stop for it. Use `hold` or `cancel`.
+- Packaging: `bun run bundle` keeps the local checkout path out of the shipped source map.
+
 ## 0.1.1
 
 - Packaging: ship the built `dist/` in the repository, so BB Git installs load the reviewed bundle.
