@@ -7,6 +7,7 @@
   same native host wait and core retry, in the same session. User stops, removed machines and idle
   provider turns are still not resumed; hold or stop a thread before a planned restart to keep it
   paused.
+- Packaging: `bun run bundle` keeps the local checkout path out of the shipped source map.
 
 ## 0.1.1
 

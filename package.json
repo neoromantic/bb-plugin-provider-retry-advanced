@@ -44,6 +44,6 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "bun test",
-    "bundle": "bb plugin build ."
+    "bundle": "bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
   }
 }
