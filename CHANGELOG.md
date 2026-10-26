@@ -7,6 +7,8 @@
   same native host wait and core retry, in the same session. User stops, removed machines and idle
   provider turns are still not resumed; hold or stop a thread before a planned restart to keep it
   paused.
+- Known limit, as for every connectivity failure since 0.1.0: stopping a thread that has already
+  failed does not prevent recovery, because BB records no stop for it. Use `hold` or `cancel`.
 - Packaging: `bun run bundle` keeps the local checkout path out of the shipped source map.
 
 ## 0.1.1
