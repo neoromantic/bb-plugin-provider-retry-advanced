@@ -31,8 +31,19 @@ restarted) is resumed once the path answers again:
 - The retry is core's own (`bb thread retry`): accepted input continues the
   same provider session with "Please continue.", unaccepted input is re-sent,
   and the failed turn's model, effort, tier and permission mode are kept.
-  Claude background work that outlived the failed turn, including an
-  ultracode workflow, keeps running in that session; nothing is relaunched.
+  After a lost connection, Claude background work that outlived the failed
+  turn, including an ultracode workflow, keeps running in that session.
+- A BB restart (or the machine's host daemon restarting) is different: it
+  kills the Claude Code process and all its background work. BB marks a
+  running workflow `stopped`, even on an idle thread. With the setting
+  `workflowRecovery` on (off by default), once the thread is idle the plugin
+  sends one agent-only "[bb provider-retry-advanced: interrupted workflow]"
+  message in the same session to check and resume that run with
+  `resumeFromRunId`: finished agents come from cache, agents that were
+  mid-step run again. Only workflows a scan saw running; never one BB still
+  shows as running; not background agents or shell commands; withdrawn at
+  dispatch on hold, cancel of the interrupted turn, user stop, BB Workflows
+  workers, or when someone wrote to the thread after the kill.
 - A lost machine is queued natively and dispatches when it reconnects.
 - Not resumed: other failures (auth, billing, quota, a provider's own 5xx,
   overloads), stopped, archived or deleted threads, threads waiting for an
@@ -44,7 +55,35 @@ restarted) is resumed once the path answers again:
   error, current failed chain differs; unknown chain → wait). Before `arm`
   such rows wait untouched. An attempt the hook already let through is not undone.
 - A hold also withdraws the thread's queued retries from this plugin and
-  blocks overload/limit retries too.
+  blocks overload/limit retries, stall restarts and follow-ups too.
+
+Stalled turns and follow-ups (each off by default; on only if the operator set it):
+
+- Watchdog: a running turn with no new events for the chosen awake time
+  (setting `stallWatchdog`: Off/15/20/30/60 minutes) is stopped and continued
+  once with an agent-only "[bb provider-retry-advanced: stalled turn]"
+  message. Skipped: pending approval/question, a tool call still running,
+  background work open, held, BB Workflows workers, already restarted once,
+  before `arm`. Sleep of the Mac does not count.
+- Continuation check (`continuationCheck`): after an automatic retry or
+  restart, a turn that ends on a short "Продолжу…"/"I'll continue" after at
+  most five tool calls gets one "[bb provider-retry-advanced: continue]"
+  message, unless it waits for you, background work or running child threads.
+- Unfinished request (`unfinishedFollowUp`): a person's message or an
+  automation run that failed for connectivity/overload/rate limit and was then
+  superseded by system notifications (so core never retried it) is sent back
+  once, as "[bb provider-retry-advanced: unfinished request]", when the thread
+  is idle and nobody wrote since.
+- A message starting with "[bb provider-retry-advanced" came from this
+  plugin, not from the user: continue the task, check the state of anything
+  you started first, and resume an interrupted BB workflow with
+  `bb workflows run … --resume <run-id>`. For "interrupted workflow", first
+  check the run's status and what its interrupted steps already did, then
+  call the Workflow tool with `resumeFromRunId` set to the run id from the
+  result of the Workflow call that started it. If the run or its journal is
+  gone, say so; do not start the workflow again on your own.
+- Failed BB Workflows runs are not resumed by the plugin (no API to start or
+  resume a run from a plugin); the starting thread resumes them.
 
 ```sh
 bb provider-retry-advanced status [thread-id] [--json]   # pending retries + waiting turns
@@ -55,6 +94,7 @@ bb provider-retry-advanced hold <thread-id>              # never auto-resume thi
 bb provider-retry-advanced release <thread-id>           # undo hold and cancel
 bb provider-retry-advanced arm                           # once after install
 bb provider-retry-advanced scan [--json]                 # run the scan now
+bb provider-retry-advanced watchdog [--json]             # run the stalled-turn check now
 bb plugin config provider-retry-advanced set transportRecovery false   # turn recovery off
 ```
 

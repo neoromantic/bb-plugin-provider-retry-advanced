@@ -56,6 +56,8 @@ export interface FakeQueueRow {
     | { kind: "inline" }
     | { kind: "retry"; retryOfTurnRequestId: string; attempt: number; reason: string };
   input: Array<Record<string, unknown>>;
+  /** The row's input as core's queued-message DTO names it. */
+  content: Array<Record<string, unknown>>;
   execution: Execution;
   retryOf: { requestId: string; attempt: number };
 }
@@ -136,11 +138,14 @@ export class FakeCore {
       execution: Execution;
       retryOf?: { requestId: string; attempt: number };
       accepted?: boolean;
+      /** Core records who asked: `user` (a person or automation), `agent` (another thread), `system`. */
+      initiator?: "user" | "agent" | "system";
     },
   ): string {
     const requestId = `creq_${String(++this.ids).padStart(10, "0")}`;
     this.append(threadId, "client/turn/requested", {
       requestId,
+      initiator: args.initiator ?? (args.retryOf === undefined ? "user" : "system"),
       input: args.input,
       execution: args.execution,
       ...(args.retryOf === undefined
@@ -187,30 +192,124 @@ export class FakeCore {
     this.setThread(threadId, { status: "idle" });
   }
 
+  /** A tool or model item starting inside the running turn. */
+  startItem(threadId: string, type: string): string {
+    const id = `item_${++this.ids}`;
+    this.append(threadId, "item/started", { item: { id, type, status: "inProgress" } });
+    return id;
+  }
+
+  completeItem(threadId: string, id: string, type: string): void {
+    this.append(threadId, "item/completed", { item: { id, type, status: "completed" } });
+  }
+
+  /** The agent's reply, then the completed turn; returns core's `thread.idle` payload. */
+  reply(threadId: string, text: string): { thread: Record<string, unknown>; lastAssistantText: string } {
+    const id = this.startItem(threadId, "agentMessage");
+    this.append(threadId, "item/completed", { item: { id, type: "agentMessage", text } });
+    this.completeTurn(threadId);
+    return { thread: this.dto(threadId), lastAssistantText: text };
+  }
+
+  /** The public thread DTO (`threads.get`, event payloads). */
+  dto(threadId: string): Record<string, unknown> {
+    const dto: Record<string, unknown> = { ...this.thread(threadId) };
+    for (const field of LIST_ONLY_FIELDS) delete dto[field];
+    dto.queuedMessageCount = this.queue.filter((row) => row.threadId === threadId).length;
+    return dto;
+  }
+
+  /** When true, `stop` leaves the thread `stopping` (the machine did not confirm). */
+  stopHangs = false;
+
   /** Claude background work that outlives the failed foreground turn. */
-  startBackgroundTask(threadId: string, taskType: string): string {
+  startBackgroundTask(threadId: string, taskType: string, workflowName?: string): string {
     const itemId = `item_${++this.ids}`;
     this.append(threadId, "item/started", {
-      item: { id: itemId, type: "backgroundTask", status: "pending", taskStatus: "running", taskType },
+      item: { id: itemId, type: "backgroundTask", familyId: `task_${itemId}`, status: "pending", taskStatus: "running", taskType, ...(workflowName === undefined ? {} : { workflowName }) },
     });
-    const thread = this.thread(threadId);
-    const activity = thread.activity;
-    this.setThread(threadId, {
-      activity: {
-        ...activity,
-        activeWorkflowCount: activity.activeWorkflowCount + (taskType === "local_workflow" ? 1 : 0),
-        activeBackgroundCommandCount: activity.activeBackgroundCommandCount + (taskType === "local_bash" ? 1 : 0),
-      },
-    });
+    this.countBackgroundTask(threadId, taskType, 1);
     return itemId;
   }
 
+  /**
+   * Claude Code's Workflow tool call as BB records it: the call (with
+   * `resumeFromRunId` when it resumes a run), the background task it starts,
+   * and the call's result, which names the run.
+   */
+  startWorkflowRun(threadId: string, workflowName: string, runId: string, resumeFromRunId?: string): string {
+    const callId = `item_${++this.ids}`;
+    const itemId = `item_${++this.ids}`;
+    const args = resumeFromRunId === undefined ? { script: "export const meta = {}" } : { resumeFromRunId };
+    this.append(threadId, "item/started", { item: { id: callId, type: "toolCall", tool: "Workflow", arguments: args, status: "inProgress" } });
+    this.append(threadId, "item/started", {
+      item: { id: itemId, type: "backgroundTask", familyId: `task_${itemId}`, status: "pending", taskStatus: "running", taskType: "local_workflow", workflowName, parentToolCallId: callId },
+    });
+    this.append(threadId, "item/completed", {
+      item: { id: callId, type: "toolCall", tool: "Workflow", arguments: args, status: "completed", result: `Workflow launched in background.\nRun ID: ${runId}` },
+    });
+    this.countBackgroundTask(threadId, "local_workflow", 1);
+    return itemId;
+  }
+
+  private countBackgroundTask(threadId: string, taskType: string, delta: number): void {
+    const activity = this.thread(threadId).activity;
+    this.setThread(threadId, {
+      activity: {
+        ...activity,
+        activeWorkflowCount: activity.activeWorkflowCount + (taskType === "local_workflow" ? delta : 0),
+        activeBackgroundCommandCount: activity.activeBackgroundCommandCount + (taskType === "local_bash" ? delta : 0),
+      },
+    });
+  }
+
+  private openBackgroundItems(threadId: string): Array<Record<string, unknown>> {
+    const events = this.events.get(threadId)!;
+    const closed = new Set(events.filter((e) => e.type === "item/backgroundTask/completed").map((e) => (e.data.item as { id: string }).id));
+    return events
+      .filter((e) => e.type === "item/started" && (e.data.item as { type: string }).type === "backgroundTask")
+      .map((e) => e.data.item as Record<string, unknown>)
+      .filter((item) => !closed.has(item.id as string));
+  }
+
+  /** Claude Code's own close (finished, TaskStop, a manual stop): the provider adds a presentation. */
+  closeBackgroundTask(threadId: string, itemId: string, taskStatus: "completed" | "failed" | "stopped"): void {
+    const item = this.openBackgroundItems(threadId).find((open) => open.id === itemId)!;
+    this.append(threadId, "item/backgroundTask/completed", {
+      providerThreadId: this.providerSessions.get(threadId),
+      item: { ...item, status: taskStatus === "stopped" ? "interrupted" : taskStatus, taskStatus, presentation: { title: "Workflow" } },
+    });
+    this.countBackgroundTask(threadId, item.taskType as string, -1);
+  }
+
+  /**
+   * core's settleDanglingBackgroundTasks when the machine's daemon was
+   * replaced (BB restart, host daemon restart) or lost: every task still
+   * open is closed as stopped from the item it last stored, no presentation.
+   */
+  settleBackgroundTasks(threadId: string): void {
+    for (const item of this.openBackgroundItems(threadId)) {
+      this.append(threadId, "item/backgroundTask/completed", {
+        providerThreadId: this.providerSessions.get(threadId),
+        item: { ...item, status: "interrupted", taskStatus: "stopped" },
+      });
+      this.countBackgroundTask(threadId, item.taskType as string, -1);
+    }
+  }
+
   /** core's dispatch-hooks.ts pass, reduced to one plugin. */
-  async runHook(threadId: string, rows: FakeQueueRow[]): Promise<{ action: string; reason?: string; message?: string; sendAt?: number | null }> {
+  async runHook(
+    threadId: string,
+    rows: FakeQueueRow[],
+    inline: Array<Record<string, unknown>> = [],
+  ): Promise<{ action: string; reason?: string; message?: string; sendAt?: number | null }> {
     if (this.hook === null) return { action: "proceed" };
     const dto: Record<string, unknown> = { ...this.thread(threadId) };
     for (const field of LIST_ONLY_FIELDS) delete dto[field];
-    return (await this.hook({ thread: dto, queuedMessages: rows.map((row) => ({ ...row })), input: { blocks: [], text: "" } })) as never;
+    // core's combined input: the rows' content, or the inline message being sent.
+    const blocks = rows.length > 0 ? rows.flatMap((row) => row.content) : inline;
+    const text = blocks.filter((block) => block.type === "text").map((block) => block.text as string).join("\n");
+    return (await this.hook({ thread: dto, queuedMessages: rows.map((row) => ({ ...row })), input: { blocks, text } })) as never;
   }
 
   /** core's queue drain: each eligible row runs the hook pass, then dispatches. */
@@ -233,7 +332,11 @@ export class FakeCore {
       }
       if (!this.queue.includes(row)) continue;
       this.queue = this.queue.filter((r) => r !== row);
-      this.startTurn(row.threadId, { input: row.input, execution: row.execution, retryOf: row.retryOf });
+      this.startTurn(row.threadId, {
+        input: row.input,
+        execution: row.execution,
+        ...(row.payload.kind === "retry" ? { retryOf: row.retryOf } : {}),
+      });
     }
   }
 
@@ -304,6 +407,7 @@ export class FakeCore {
               : { kind: "host-offline", hostName: thread.environmentHostId ?? "" },
           payload: { kind: "retry", retryOfTurnRequestId: originalRequestId, attempt, reason: args.reason ?? "" },
           input,
+          content: input,
           execution,
           retryOf,
         };
@@ -332,20 +436,64 @@ export class FakeCore {
             (t) => t.archivedAt === null && t.deletedAt === null && (args.status === undefined || t.status === args.status),
           ).length,
         }),
-        list: async (args: { archived?: boolean; includeHidden?: boolean; limit?: number; offset?: number } = {}) => {
+        list: async (args: { archived?: boolean; includeHidden?: boolean; limit?: number; offset?: number; parentThreadId?: string } = {}) => {
           const rows = [...this.threads.values()].filter(
             (t) =>
               t.deletedAt === null &&
+              (args.parentThreadId === undefined || t.parentThreadId === args.parentThreadId) &&
               (args.archived === true ? t.archivedAt !== null : t.archivedAt === null) &&
               (args.includeHidden === true || t.visibility !== "hidden"),
           );
           const offset = args.offset ?? 0;
           return rows.slice(offset, offset + (args.limit ?? 100));
         },
-        get: async ({ threadId }: { threadId: string }) => {
-          const dto: Record<string, unknown> = { ...this.thread(threadId) };
-          for (const field of LIST_ONLY_FIELDS) delete dto[field];
-          return dto;
+        get: async ({ threadId }: { threadId: string }) => this.dto(threadId),
+        listRunning: async () =>
+          [...this.threads.values()]
+            .filter((t) => t.status === "active" && t.archivedAt === null && t.deletedAt === null)
+            .map((t) => ({ id: t.id, hostId: t.environmentHostId })),
+        // core: a manual stop interrupts the running turn and settles the thread idle.
+        stop: async ({ threadId }: { threadId: string }) => {
+          const thread = this.thread(threadId);
+          if (thread.status !== "active") return { ok: true };
+          if (this.stopHangs) {
+            this.setThread(threadId, { status: "stopping" as never });
+            return { ok: true };
+          }
+          this.append(threadId, "turn/completed", { status: "interrupted" });
+          this.interruptTurn(threadId, "manual-stop");
+          return { ok: true };
+        },
+        // core's send: hook pass, then dispatch, or a queued row behind a busy thread.
+        send: async (args: { threadId: string; input: Array<Record<string, unknown>>; mode: string; model?: string; reasoningLevel?: string; serviceTier?: string; permissionMode?: string }) => {
+          const thread = this.thread(args.threadId);
+          const decision = await this.runHook(args.threadId, [], args.input);
+          if (decision.action === "reject") throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
+          const execution: Execution = {
+            model: args.model ?? "thread-default",
+            reasoningLevel: args.reasoningLevel ?? "thread-default",
+            serviceTier: args.serviceTier ?? "thread-default",
+            permissionMode: args.permissionMode ?? "thread-default",
+          };
+          if (thread.status === "active" || decision.action === "wait") {
+            this.queue.push({
+              id: `qmsg_${++this.ids}`,
+              threadId: args.threadId,
+              createdAt: this.now,
+              failureReason: null,
+              sendAt: null,
+              state: "queued",
+              waitingOn: { kind: "thread-busy" },
+              payload: { kind: "inline" },
+              input: args.input,
+              content: args.input,
+              execution,
+              retryOf: { requestId: "", attempt: 0 },
+            });
+            return { ok: true, delivery: "queued" };
+          }
+          this.startTurn(args.threadId, { input: args.input, execution });
+          return { ok: true, delivery: "sent" };
         },
         interactions: {
           list: async ({ threadId }: { threadId: string }) =>

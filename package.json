@@ -1,9 +1,22 @@
 {
   "name": "bb-plugin-provider-retry-advanced",
-  "version": "0.1.2",
+  "version": "0.2.1",
   "type": "module",
-  "description": "BB's provider retry plus automatic resume of turns that failed because the network or provider path was unreachable.",
+  "description": "BB's provider retry plus automatic resume after lost connectivity, with optional restart workflow recovery, stalled-turn watchdog and continuation follow-ups.",
   "license": "MIT",
+  "files": [
+    "dist/",
+    "server.ts",
+    "src/",
+    "skills/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "NOTICE",
+    "docs/",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ],
   "author": "Sergey Petrov",
   "keywords": [
     "bb-plugin"
@@ -22,7 +35,7 @@
   },
   "bb": {
     "name": "Provider retry advanced",
-    "description": "Retries provider overloads and subscription limits like the bundled Provider retry, and resumes turns that failed for lost connectivity once the provider answers again.",
+    "description": "Retries provider overloads and subscription limits like the bundled Provider retry, resumes turns that failed for lost connectivity, and, when turned on, asks Claude Code to resume workflows a BB restart killed, restarts stalled turns once and follows up resumed turns that only promised to continue.",
     "branding": {
       "icon": "ArrowReloadHorizontal"
     },
@@ -44,6 +57,6 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "bun test",
-    "bundle": "bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
+    "bundle": "bunx --package bb-app@0.48.0 bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
   }
 }

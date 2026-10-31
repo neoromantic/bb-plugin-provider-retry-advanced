@@ -2,6 +2,18 @@ import type { BbPluginApi, MessageDispatchHookContext } from "@get-bb/plugin-sdk
 import type { RetryDiagnostic } from "./diagnostics.js";
 import type { ProbeFn, ProbeResult } from "./probe.js";
 import {
+  hasPendingInteraction,
+  isOwnMessage,
+  latestRequest,
+  listEvents,
+  openBackgroundWork,
+  parseRequest,
+  requestsAfter,
+  sendAgentOnly,
+  WORKFLOW_TAG,
+  workflowText,
+} from "./continuations.js";
+import {
   classifyFailedTurn,
   type EventLike,
   type FailureClass,
@@ -88,6 +100,59 @@ type DispatchDecision =
   | { action: "wait"; reason: string; sendAt?: number | null }
   | { action: "reject"; message: string };
 
+/** The fields of a Claude Code background task, or of a tool call, this plugin reads. */
+interface TaskItem {
+  id: string;
+  type: string;
+  taskType?: string;
+  taskStatus?: string;
+  workflowName?: string;
+  /** Claude Code's task id. */
+  familyId?: string;
+  /** The tool call that started the task (the Workflow call for a workflow). */
+  parentToolCallId?: string;
+  /** Set by the provider's own close; absent when core closed a task it found open. */
+  presentation?: unknown;
+  tool?: string;
+  arguments?: { resumeFromRunId?: string };
+  result?: unknown;
+}
+
+/** Where a killed workflow came from, read once from its start and kept with the marker. */
+interface WorkflowOrigin {
+  /** Claude Code's run id from the result of the Workflow call that started it; null when not found. */
+  runId: string | null;
+  /** The request chain that started it; a cancel of this chain drops it. Null when not found. */
+  chain: string | null;
+}
+
+/** A thread a scan saw with an open Claude Code workflow (kept in KV across restarts). */
+interface WorkflowRecord {
+  /** When the scan that first saw the open workflow started; its close cannot be earlier. */
+  sinceAt: number;
+  /** Origins of the killed workflows, by task item id. */
+  origins: Record<string, WorkflowOrigin>;
+  /** The killed workflows the last check asked about; their chains are the ones a cancel withdraws. */
+  asked: string[];
+}
+
+/** A workflow core closed as stopped after a restart, with its origin. */
+interface KilledWorkflow extends WorkflowOrigin {
+  seq: number;
+  id: string;
+  /** Claude Code's task id (the item's familyId). */
+  task: string;
+  name: string;
+}
+
+/** "Run ID: wf_…" in the result of Claude Code's Workflow tool call. */
+const RUN_ID = /Run ID: (wf_[A-Za-z0-9-]+)/;
+
+/** This plugin's own interrupted-workflow message, queued or about to be dispatched. */
+function isWorkflowRow(row: QueueRow): boolean {
+  return row.content.some((block) => block.type === "text" && block.text.startsWith(WORKFLOW_TAG));
+}
+
 interface SkipRecord {
   originalRequestId: string;
   at: number;
@@ -96,6 +161,8 @@ interface SkipRecord {
 export interface TransportRecoveryOptions {
   probe: ProbeFn;
   enabled: () => boolean;
+  /** The `workflowRecovery` setting: resume Claude Code workflows a restart killed. */
+  workflowRecovery: () => boolean;
   now?: () => number;
 }
 
@@ -120,7 +187,7 @@ export interface TransportRecovery {
   /** A queued retry row was removed before it dispatched. */
   onRetryRowCancelled(entry: { id: string; threadId: string; payload: { kind: string; retryOfTurnRequestId?: string } }): Promise<void>;
   /** The `message.dispatch` checkpoint: core asks before every attempt and every drain. */
-  decideDispatch(context: MessageDispatchHookContext): DispatchDecision;
+  decideDispatch(context: MessageDispatchHookContext): DispatchDecision | Promise<DispatchDecision>;
 }
 
 function openBackgroundTasks(thread: ThreadRow): number {
@@ -168,10 +235,15 @@ export function createTransportRecovery(
   const refreshing = new Set<string>();
   const inflight = new Map<string, string>();
   const selfDeleting = new Set<string>();
+  // Threads a scan saw with an open Claude Code workflow; kept across restarts.
+  const workflowsSeen = new Map<string, WorkflowRecord>();
+  // A thread's workflow message checked at this event sequence: the hook lets it through
+  // once, and only if nothing happened on the thread after that sequence.
+  const workflowReady = new Map<string, number>();
   let running: Promise<ScanReport> | null = null;
   let last: ScanReport | null = null;
 
-  async function listErrorThreads(): Promise<ThreadRow[]> {
+  async function listThreads(): Promise<ThreadRow[]> {
     const rows: ThreadRow[] = [];
     for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
       const page = (await bb.sdk.threads.list({
@@ -180,8 +252,214 @@ export function createTransportRecovery(
         limit: LIST_PAGE_SIZE,
         offset,
       })) as unknown as ThreadRow[];
-      rows.push(...page.filter((thread) => thread.status === "error"));
+      rows.push(...page);
       if (page.length < LIST_PAGE_SIZE) return rows;
+    }
+  }
+
+  async function forgetWorkflow(threadId: string): Promise<void> {
+    workflowsSeen.delete(threadId);
+    workflowReady.delete(threadId);
+    await bb.storage.kv.delete(`workflow:${threadId}`);
+  }
+
+  /**
+   * Workflows a restart killed and nothing resumed since, oldest first. A BB
+   * restart (or the thread's machine restarting or dropping off) kills the
+   * Claude Code process, and with it workflows still running in the
+   * background, even when the turn that started them had ended and the
+   * thread is idle: there is no failed turn for core to retry. Core then
+   * closes each task as `stopped` with the item it last stored; Claude Code's
+   * own close of a workflow it finished or stopped (TaskStop, a manual stop)
+   * carries a presentation.
+   *
+   * A killed run counts as resumed only by a later Workflow call with its
+   * `resumeFromRunId`. A run whose id is unknown stays a candidate: names
+   * prove nothing, so the message asks to check that task's run first.
+   */
+  async function killedWorkflows(threadId: string, record: WorkflowRecord): Promise<KilledWorkflow[]> {
+    const killed: KilledWorkflow[] = [];
+    for (let before: number | undefined; ; ) {
+      const page = await listEvents(bb, { threadId, types: ["item/backgroundTask/completed"], beforeSeq: before, order: "desc", limit: LIST_PAGE_SIZE });
+      const recent = page.filter((event) => (event.createdAt ?? 0) >= record.sinceAt);
+      for (const event of recent) {
+        const item = (event.data as { item: TaskItem }).item;
+        if (item.taskType !== "local_workflow" || item.taskStatus !== "stopped" || item.presentation !== undefined) continue;
+        if (record.origins[item.id] === undefined) {
+          // Where it came from, read once: its start, the Workflow call's result (which names the
+          // run), and the request before its start (the chain it belongs to).
+          const origin: WorkflowOrigin = { runId: null, chain: null };
+          for (let startBefore = event.seq; ; ) {
+            const starts = await listEvents(bb, { threadId, types: ["item/started"], beforeSeq: startBefore, order: "desc", limit: LIST_PAGE_SIZE });
+            const start = starts.find((started) => (started.data as { item: TaskItem }).item.id === item.id);
+            if (start !== undefined) {
+              const completed = await listEvents(bb, { threadId, types: ["item/completed"], afterSeq: start.seq, order: "asc", limit: 50 });
+              const call = completed.find((done) => (done.data as { item: TaskItem }).item.id === item.parentToolCallId);
+              if (call !== undefined) {
+                const match = RUN_ID.exec(String((call.data as { item: TaskItem }).item.result));
+                if (match !== null) origin.runId = match[1]!;
+              }
+              const [request] = await listEvents(bb, { threadId, types: ["client/turn/requested"], beforeSeq: start.seq, order: "desc", limit: 1 });
+              if (request !== undefined) {
+                const parsed = parseRequest(request);
+                origin.chain = parsed.retryOfRequestId ?? parsed.requestId;
+              }
+              break;
+            }
+            if (starts.length < LIST_PAGE_SIZE) break;
+            startBefore = starts.at(-1)!.seq;
+          }
+          record.origins[item.id] = origin;
+        }
+        killed.unshift({ seq: event.seq, id: item.id, task: String(item.familyId), name: String(item.workflowName), ...record.origins[item.id]! });
+      }
+      if (page.length < LIST_PAGE_SIZE || recent.length < page.length) break;
+      before = page.at(-1)!.seq;
+    }
+    if (killed.length === 0) return killed;
+    // Workflow calls after the first kill that resume a run by id.
+    const resumes: Array<{ seq: number; runId: string }> = [];
+    for (let afterSeq = killed[0]!.seq; ; ) {
+      const page = await listEvents(bb, { threadId, types: ["item/started"], afterSeq, order: "asc", limit: LIST_PAGE_SIZE });
+      for (const event of page) {
+        const item = (event.data as { item: TaskItem }).item;
+        if (item.tool === "Workflow" && item.arguments?.resumeFromRunId !== undefined) resumes.push({ seq: event.seq, runId: item.arguments.resumeFromRunId });
+      }
+      if (page.length < LIST_PAGE_SIZE) break;
+      afterSeq = page.at(-1)!.seq;
+    }
+    return killed.filter((run) => !resumes.some((resume) => resume.seq > run.seq && resume.runId === run.runId));
+  }
+
+  /**
+   * Why the dispatch hook must not let this thread's workflow message through,
+   * or null. Reads memory only: the scan and `refreshWorkflow` keep it current.
+   */
+  function workflowBlocked(threadId: string): string | null {
+    if (!options.workflowRecovery()) return "setting-off";
+    if (!armed) return "not-armed";
+    if (held.has(threadId)) return "held";
+    const record = workflowsSeen.get(threadId);
+    if (record === undefined) return "withdrawn";
+    if (record.asked.some((id) => record.origins[id]!.chain !== null && skipped.get(threadId) === record.origins[id]!.chain)) return "cancelled";
+    return null;
+  }
+
+  /**
+   * Decides about a thread whose open workflows all closed: `ready` (with
+   * what to send and the event sequence the checks saw), `waiting` (check
+   * again later) or `skipped` (drop it). The hook admits the message only if
+   * the thread has no event after that sequence.
+   */
+  async function checkWorkflow(
+    thread: Pick<ThreadRow, "id" | "status" | "originPluginId">,
+    record: WorkflowRecord,
+  ): Promise<{ state: "ready" | "waiting" | "skipped"; reason: string; labels?: string[]; seq?: number }> {
+    const [latest] = await listEvents(bb, { threadId: thread.id, order: "desc", limit: 1 });
+    const all = await killedWorkflows(thread.id, record);
+    const killed = all.filter((run) => run.chain === null || skipped.get(thread.id) !== run.chain);
+    if (all.length === 0) return { state: "skipped", reason: "workflow-finished-or-resumed" };
+    if (killed.length === 0) return { state: "skipped", reason: "cancelled" };
+    // Without the chain a cancel cannot be honoured: never send, keep the marker and say why.
+    if (killed.some((run) => run.chain === null)) return { state: "waiting", reason: "workflow-origin-unknown" };
+    if (held.has(thread.id)) return { state: "skipped", reason: "held" };
+    if (thread.originPluginId === WORKFLOW_ENGINE_PLUGIN_ID) return { state: "skipped", reason: "workflow-engine-owned" };
+    const stops = await listEvents(bb, { threadId: thread.id, types: ["system/thread/interrupted"], order: "desc", limit: 50 });
+    if (stops.some((event) => (event.createdAt ?? 0) >= record.sinceAt && (event.data as { reason?: unknown }).reason === "manual-stop")) {
+      return { state: "skipped", reason: "stopped-by-user" };
+    }
+    const after = await requestsAfter(bb, thread.id, killed[0]!.seq);
+    if (after.some((request) => request.text.startsWith(WORKFLOW_TAG))) return { state: "skipped", reason: "already-sent" };
+    if (after.some((r) => !isOwnMessage(r) && r.retryOfRequestId === null && (r.initiator === "user" || r.initiator === "agent"))) {
+      return { state: "skipped", reason: "a-newer-message-took-over" };
+    }
+    // A failed turn is retried first (doScan); a busy or waiting thread is checked again later.
+    if (thread.status !== "idle") return { state: "waiting", reason: `thread-${thread.status}` };
+    if (await hasPendingInteraction(bb, thread.id)) return { state: "waiting", reason: "pending-interaction" };
+    if (!armed) return { state: "waiting", reason: "not-armed (run: bb provider-retry-advanced arm)" };
+    if ((await openBackgroundWork(bb, thread.id)) > 0) return { state: "waiting", reason: "background-work-open" };
+    const queued = await bb.sdk.threads.queue.list({ threadId: thread.id });
+    record.asked = killed.map((run) => run.id);
+    if (queued.some(isWorkflowRow)) return { state: "waiting", reason: "message-queued", seq: latest!.seq };
+    if (queued.length > 0) return { state: "waiting", reason: "other-message-queued" };
+    const labels: string[] = [];
+    for (const run of killed) {
+      if (run.runId === null) labels.push(`"${run.name}" (Claude Code task ${run.task}, run id unknown: check that task's run and status)`);
+      else labels.push(`"${run.name}" (run ${run.runId})`);
+    }
+    return { state: "ready", reason: "interrupted-workflow", labels, seq: latest!.seq };
+  }
+
+  /** Before a queued workflow message drains: check again, then let it through or withdraw it. */
+  function refreshWorkflow(threadId: string): void {
+    const record = workflowsSeen.get(threadId);
+    if (record === undefined || refreshing.has(`workflow:${threadId}`)) return;
+    refreshing.add(`workflow:${threadId}`);
+    void (async () => {
+      try {
+        const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadRow;
+        // The queued message itself is the one row: judge the thread as if it were not queued.
+        const decision = await checkWorkflow({ ...thread, status: "idle" }, record);
+        if (decision.reason === "message-queued") workflowReady.set(threadId, decision.seq!);
+        await bb.storage.kv.set(`workflow:${threadId}`, record);
+        if (decision.state === "skipped") {
+          await forgetWorkflow(threadId);
+          await withdrawThreadRows(threadId, `workflow ${decision.reason}`);
+        }
+        await bb.experimental_hooks.recheck("message.dispatch");
+      } catch (error) {
+        bb.log.warn(`Could not check the interrupted workflow of ${threadId}: ${String(error)}`);
+      } finally {
+        refreshing.delete(`workflow:${threadId}`);
+      }
+    })();
+  }
+
+  async function checkWorkflows(threads: ThreadRow[], report: ScanReport): Promise<void> {
+    const rows = new Map(threads.map((thread) => [thread.id, thread]));
+    for (const thread of threads) {
+      if (thread.activity === undefined || thread.activity.activeWorkflowCount === 0 || workflowsSeen.has(thread.id)) continue;
+      // The scan's start bounds the close: a workflow closed after this list read is still found.
+      const record: WorkflowRecord = { sinceAt: report.at, origins: {}, asked: [] };
+      workflowsSeen.set(thread.id, record);
+      await bb.storage.kv.set(`workflow:${thread.id}`, record);
+    }
+    for (const [threadId, record] of workflowsSeen) {
+      const thread = rows.get(threadId);
+      if (thread !== undefined && thread.activity !== undefined && thread.activity.activeWorkflowCount > 0) continue;
+      const entry: ScanEntry = { threadId, requestId: null, state: "skipped", reason: "workflow:thread-archived-or-deleted", openBackgroundTasks: 0 };
+      report.entries.push(entry);
+      if (thread === undefined) {
+        await forgetWorkflow(threadId);
+        continue;
+      }
+      entry.openBackgroundTasks = openBackgroundTasks(thread);
+      try {
+        const decision = await checkWorkflow(thread, record);
+        entry.reason = `workflow:${decision.reason}`;
+        await bb.storage.kv.set(`workflow:${threadId}`, record);
+        if (decision.state === "skipped") {
+          await forgetWorkflow(threadId);
+          await withdrawThreadRows(threadId, `workflow ${decision.reason}`);
+          continue;
+        }
+        if (decision.state === "waiting") {
+          entry.state = "waiting";
+          continue;
+        }
+        const request = await latestRequest(bb, threadId);
+        // The hook lets this send through once, if nothing happened after the checks;
+        // the marker stays until a scan sees the message dispatched.
+        workflowReady.set(threadId, decision.seq!);
+        await sendAgentOnly(bb, { threadId, text: workflowText(decision.labels!), execution: request!.execution });
+        entry.state = "resumed";
+        bb.log.info(`Interrupted workflow: ${threadId} lost ${decision.labels!.length} Claude Code workflow(s) to a restart; sent one message to resume.`);
+      } catch (error) {
+        workflowReady.delete(threadId);
+        entry.state = "waiting";
+        entry.reason = `workflow:send-failed`;
+        bb.log.warn(`Could not ask ${threadId} to resume its interrupted workflow: ${String(error)}`);
+      }
     }
   }
 
@@ -344,9 +622,15 @@ export function createTransportRecovery(
     return removed;
   }
 
+  /** This plugin's queued retries (of `chain` only, when given) and its interrupted-workflow message. */
   async function withdrawThreadRows(threadId: string, why: string, chain?: string): Promise<void> {
+    const record = workflowsSeen.get(threadId);
     const rows = (await bb.sdk.threads.queue.list({ threadId })).filter(
-      (row) => isOwnRetryRow(row) && row.state !== "claimed" && (chain === undefined || row.payload.retryOfTurnRequestId === chain),
+      (row) =>
+        row.state !== "claimed" &&
+        ((isOwnRetryRow(row) && (chain === undefined || row.payload.retryOfTurnRequestId === chain)) ||
+          (isWorkflowRow(row) &&
+            (chain === undefined || (record !== undefined && record.asked.some((id) => record.origins[id]!.chain === chain))))),
     );
     if (rows.length > 0) await deleteOwnRows(rows, why);
   }
@@ -382,19 +666,17 @@ export function createTransportRecovery(
       probes: {},
       staleRowsRemoved: 0,
     };
-    if (!report.enabled) return report;
+    if (!report.enabled && !options.workflowRecovery()) return report;
 
     const queuedBefore = await bb.sdk.threads.queue.list({});
     // Before arm, rows are kept as they are (the hook holds them); after, stale ones go.
     if (armed) report.staleRowsRemoved = await removeStaleOwnRows(queuedBefore);
     const queued = report.staleRowsRemoved === 0 ? queuedBefore : await bb.sdk.threads.queue.list({});
 
-    const { total } = await bb.sdk.threads.count({ status: "error" });
-    if (total === 0) {
-      failedTurns.clear();
-      return report;
-    }
-    const threads = await listErrorThreads();
+    const listed = await listThreads();
+    if (options.workflowRecovery()) await checkWorkflows(listed, report);
+    if (!report.enabled) return report;
+    const threads = listed.filter((thread) => thread.status === "error");
     report.errorThreads = threads.length;
     const errorIds = new Set(threads.map((thread) => thread.id));
     for (const id of failedTurns.keys()) if (!errorIds.has(id)) failedTurns.delete(id);
@@ -517,6 +799,10 @@ export function createTransportRecovery(
     async init() {
       armed = (await bb.storage.kv.get(ARMED_KEY)) !== undefined;
       for (const key of await bb.storage.kv.list("hold:")) held.add(key.slice("hold:".length));
+      for (const key of await bb.storage.kv.list("workflow:")) {
+        const record = await bb.storage.kv.get<WorkflowRecord>(key);
+        if (record !== undefined) workflowsSeen.set(key.slice("workflow:".length), record);
+      }
       for (const key of await bb.storage.kv.list("skip:")) {
         const record = await bb.storage.kv.get<SkipRecord>(key);
         if (record !== undefined) skipped.set(key.slice("skip:".length), record.originalRequestId);
@@ -547,6 +833,7 @@ export function createTransportRecovery(
     async hold(threadId) {
       held.add(threadId);
       await bb.storage.kv.set(`hold:${threadId}`, { at: now() });
+      await forgetWorkflow(threadId);
       await withdrawThreadRows(threadId, "held");
     },
     async release(threadId) {
@@ -574,11 +861,47 @@ export function createTransportRecovery(
     },
     async onRetryRowCancelled(entry) {
       if (selfDeleting.has(entry.id)) return;
+      // Deleting the queued interrupted-workflow message is a decision about those workflows.
+      if (isWorkflowRow(entry as QueueRow)) return forgetWorkflow(entry.threadId);
       if (entry.payload.kind !== "retry" || entry.payload.retryOfTurnRequestId === undefined) return;
       await setSkip(entry.threadId, entry.payload.retryOfTurnRequestId);
     },
     decideDispatch(context) {
       const threadId = context.thread.id;
+      // This plugin's interrupted-workflow message: inline right after its checks, or queued.
+      const workflowRows = context.queuedMessages.filter(isWorkflowRow);
+      if (workflowRows.length > 0 || (context.queuedMessages.length === 0 && context.input.text.startsWith(WORKFLOW_TAG))) {
+        const blocked = workflowBlocked(threadId);
+        const checkedAt = workflowReady.get(threadId);
+        workflowReady.delete(threadId);
+        if (workflowRows.length === 0) {
+          // Inline: only the send a scan has just checked, to a thread that is still idle.
+          if (blocked !== null) return { action: "reject", message: `Interrupted-workflow message withdrawn: ${blocked}.` };
+          if (context.thread.status !== "idle") return { action: "reject", message: `Interrupted-workflow message withdrawn: thread-${context.thread.status}.` };
+          if (checkedAt === undefined) return { action: "reject", message: "Interrupted-workflow message withdrawn: not-checked." };
+          // One indexed read (core allows async decisions within its box): anything on the thread
+          // after the checks (a turn, a request, a stop, a workflow starting) refuses the send.
+          return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(([next]) =>
+            next === undefined ? { action: "proceed" } : { action: "reject", message: "Interrupted-workflow message withdrawn: the thread moved on." },
+          );
+        }
+        if (blocked !== null) {
+          setTimeout(() => {
+            void deleteOwnRows(workflowRows, blocked).then(() => bb.experimental_hooks.recheck("message.dispatch"));
+          }, 0);
+          return { action: "wait", reason: `Interrupted-workflow message withdrawn: ${blocked}` };
+        }
+        // Queued: admitted only on checks run against the current state; otherwise check again.
+        if (checkedAt === undefined) {
+          refreshWorkflow(threadId);
+          return { action: "wait", reason: "Checking the interrupted workflow", sendAt: now() + NOT_READY_WAIT_MS };
+        }
+        return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(([next]): DispatchDecision => {
+          if (next === undefined) return { action: "proceed" };
+          refreshWorkflow(threadId);
+          return { action: "wait", reason: "Checking the interrupted workflow", sendAt: now() + NOT_READY_WAIT_MS };
+        });
+      }
       const own = context.queuedMessages.filter(isOwnRetryRow);
       if (own.length === 0) {
         // Inline: only this plugin's own retry call, identified while it runs.

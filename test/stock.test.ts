@@ -400,15 +400,46 @@ describe("provider retry plugin", () => {
           "Every 60 seconds, resume turns that failed because the provider or machine was unreachable, once it answers again. No attempt limit.",
         default: true,
       },
+      // Fork: workflow recovery, the stalled-turn watchdog and the two follow-ups, each off by default.
+      workflowRecovery: {
+        type: "boolean",
+        label: "Resume workflows a restart killed",
+        description:
+          "When a BB or machine restart kills a Claude Code workflow, send the idle thread one message to resume that run by its id. Agents that were mid-step run again, so their side effects can repeat.",
+        default: false,
+      },
+      stallWatchdog: {
+        type: "select",
+        label: "Restart stalled turns",
+        description:
+          "Stop a running turn that sent no events for this long while BB was awake, and continue it once. Never touches a turn waiting for you, running a tool, or with background work open.",
+        options: ["Off", "15 minutes", "20 minutes", "30 minutes", "60 minutes"],
+        default: "Off",
+      },
+      continuationCheck: {
+        type: "boolean",
+        label: "Continuation check",
+        description:
+          'After an automatic retry or restart, if the turn ends on a short "I\'ll continue" after at most a few tool calls, send one more continue.',
+        default: false,
+      },
+      unfinishedFollowUp: {
+        type: "boolean",
+        label: "Unfinished request follow-up",
+        description:
+          "When a failed message or automation run was superseded by system notifications before it could be retried, send it back once when the thread is idle.",
+        default: false,
+      },
     });
     expect(host.harness.registrations.threadEventHandlers["turn.failed"]).toBe(
       1,
     );
+    expect(host.harness.registrations.threadEventHandlers["thread.idle"]).toBe(1);
     // Fork: the dispatch hook enforces holds/cancels/supersession on this plugin's own retries.
     expect(typeof host.harness.registrations.hooks["message.dispatch"]).toBe("function");
     expect(
       host.harness.registrations.cli?.commands.map((command) => command.name),
-    ).toEqual(["status", "explain", "cancel", "retry", "hold", "release", "arm", "scan"]);
+    ).toEqual(["status", "explain", "cancel", "retry", "hold", "release", "arm", "watchdog", "scan"]);
     await host.harness.dispose();
   });
 
@@ -594,6 +625,8 @@ describe("provider retry plugin", () => {
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout ?? "")).toEqual({
       connectivity: null,
+      watchdog: null,
+      followUps: { recent: [], pendingUnfinished: 0 },
       retries: [
         {
           id: "queued_1",

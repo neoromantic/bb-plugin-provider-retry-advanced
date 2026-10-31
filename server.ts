@@ -1,7 +1,9 @@
 // Derived from get-bb/bb plugins/provider-retry/server.ts (MIT, desktop-v0.46.1).
 // Changes: the stock overload/subscription-limit policy runs only for those
 // failures; connectivity (transport) failures are recovered by a fixed 60s
-// scan that probes the provider path and asks core to retry natively.
+// scan that probes the provider path and asks core to retry natively; a
+// stalled-turn watchdog and two follow-ups (continuation check, unfinished
+// request) keep stalled work moving without a person nudging it.
 import {
   readRetryDiagnostic,
   retryDiagnosticContract,
@@ -13,15 +15,28 @@ import {
 } from "./src/retry-contract.js";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { registerProviderRetryCli } from "./src/cli.js";
+import { createFollowUps } from "./src/follow-ups.js";
 import { createProbe, type ProbeFn } from "./src/probe.js";
-import { createTransportRecovery, runRecoveryLoop } from "./src/recovery.js";
+import { createTransportRecovery, runRecoveryLoop, sleep } from "./src/recovery.js";
 import {
   DEFAULT_MAXIMUM_WAIT_MS,
   decideRetry,
   isRateLimitFailure,
 } from "./src/retry-policy.js";
+import { createStallWatchdog, runWatchdogLoop } from "./src/watchdog.js";
 
 const MAXIMUM_WAIT_OPTIONS = ["6 hours", "24 hours", "No limit"] as const;
+
+const STALL_WATCHDOG_OPTIONS = ["Off", "15 minutes", "20 minutes", "30 minutes", "60 minutes"] as const;
+
+function stallLimitMs(value: string): number | null {
+  if (value === "Off") return null;
+  const minutes = Number.parseInt(value, 10);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new Error(`Unsupported stall watchdog setting: ${String(value)}`);
+  }
+  return minutes * 60_000;
+}
 
 function maximumWaitMs(value: string): number | null {
   switch (value) {
@@ -41,6 +56,10 @@ function maximumWaitMs(value: string): number | null {
 export interface PluginOptions {
   probe?: ProbeFn;
   now?: () => number;
+  /** A clock that stops while the machine sleeps (tests drive it). */
+  monotonic?: () => number;
+  /** Waits between polls while a stopped turn settles (tests make it instant). */
+  wait?: (ms: number) => Promise<void>;
 }
 
 export function createPlugin(options: PluginOptions = {}) {
@@ -61,19 +80,73 @@ export function createPlugin(options: PluginOptions = {}) {
           "Every 60 seconds, resume turns that failed because the provider or machine was unreachable, once it answers again. No attempt limit.",
         default: true,
       },
+      workflowRecovery: {
+        type: "boolean",
+        label: "Resume workflows a restart killed",
+        description:
+          "When a BB or machine restart kills a Claude Code workflow, send the idle thread one message to resume that run by its id. Agents that were mid-step run again, so their side effects can repeat.",
+        default: false,
+      },
+      stallWatchdog: {
+        type: "select",
+        label: "Restart stalled turns",
+        description:
+          "Stop a running turn that sent no events for this long while BB was awake, and continue it once. Never touches a turn waiting for you, running a tool, or with background work open.",
+        options: [...STALL_WATCHDOG_OPTIONS],
+        default: "Off",
+      },
+      continuationCheck: {
+        type: "boolean",
+        label: "Continuation check",
+        description:
+          "After an automatic retry or restart, if the turn ends on a short \"I'll continue\" after at most a few tool calls, send one more continue.",
+        default: false,
+      },
+      unfinishedFollowUp: {
+        type: "boolean",
+        label: "Unfinished request follow-up",
+        description:
+          "When a failed message or automation run was superseded by system notifications before it could be retried, send it back once when the thread is idle.",
+        default: false,
+      },
     });
     const initialSettings = await settings.get();
     let maximumWait = maximumWaitMs(initialSettings.maximumWait);
     let transportRecovery = initialSettings.transportRecovery;
+    let workflowRecovery = initialSettings.workflowRecovery;
+    let stallLimit = stallLimitMs(initialSettings.stallWatchdog);
+    let continuationCheck = initialSettings.continuationCheck;
+    let unfinishedFollowUp = initialSettings.unfinishedFollowUp;
     settings.onChange((next) => {
       maximumWait = maximumWaitMs(next.maximumWait);
       transportRecovery = next.transportRecovery;
+      workflowRecovery = next.workflowRecovery;
+      stallLimit = stallLimitMs(next.stallWatchdog);
+      continuationCheck = next.continuationCheck;
+      unfinishedFollowUp = next.unfinishedFollowUp;
     });
 
+    const now = options.now ?? Date.now;
     const recovery = createTransportRecovery(bb, {
       probe: options.probe ?? createProbe(),
       enabled: () => transportRecovery,
-      ...(options.now === undefined ? {} : { now: options.now }),
+      workflowRecovery: () => workflowRecovery,
+      now,
+    });
+    const watchdog = createStallWatchdog(bb, {
+      limitMs: () => stallLimit,
+      isArmed: () => recovery.isArmed(),
+      isHeld: (threadId) => recovery.isHeld(threadId),
+      now,
+      monotonic: options.monotonic ?? (() => performance.now()),
+      ...(options.wait === undefined ? {} : { wait: options.wait }),
+    });
+    const followUps = createFollowUps(bb, {
+      continuationCheck: () => continuationCheck,
+      unfinishedFollowUp: () => unfinishedFollowUp,
+      isArmed: () => recovery.isArmed(),
+      isHeld: (threadId) => recovery.isHeld(threadId),
+      now,
     });
 
     bb.rpc.register(retryDiagnosticContract, {
@@ -83,8 +156,13 @@ export function createPlugin(options: PluginOptions = {}) {
     // Stock policy, unchanged, for the two failure kinds it owns. Every other
     // failure is classified by the connectivity scan from the turn's events.
     await recovery.init();
+    await watchdog.init();
+    await followUps.init();
     bb.events.on("turn.failed", async (event) => {
       recovery.noteFailure(event.threadId);
+      await followUps.noteFailure(event).catch((error: unknown) =>
+        bb.log.warn(`Could not record the failed request on ${event.threadId}: ${String(error)}`),
+      );
       if (event.errorInfo?.category !== "overloaded" && !isRateLimitFailure(event)) {
         return;
       }
@@ -177,11 +255,23 @@ export function createPlugin(options: PluginOptions = {}) {
       recovery.onRetryRowCancelled(entry),
     );
 
+    // A thread became idle: maybe a resumed turn only promised to continue,
+    // or a failed request was superseded and never retried.
+    bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
+      await followUps
+        .onIdle(thread as never, lastAssistantText)
+        .catch((error: unknown) => bb.log.warn(`Follow-up check failed for ${thread.id}: ${String(error)}`));
+    });
+
     bb.background.service("connectivity-recovery", {
       start: (signal) => runRecoveryLoop({ recovery, signal, log: bb.log }),
     });
 
-    registerProviderRetryCli(bb, recovery);
+    bb.background.service("stall-watchdog", {
+      start: (signal) => runWatchdogLoop({ watchdog, signal, log: bb.log, wait: sleep }),
+    });
+
+    registerProviderRetryCli(bb, recovery, { watchdog, followUps });
   };
 }
 
