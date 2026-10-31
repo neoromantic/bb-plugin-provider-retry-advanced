@@ -24,7 +24,7 @@ bb plugin disable provider-retry
 bb plugin install git:https://github.com/neoromantic/bb-plugin-provider-retry-advanced.git@semver:^0.2.1 --yes
 ```
 
-Or install the exact npm version:
+npm publication is pending; use the Git command above for now.
 
 ```sh
 bb plugin install npm:bb-plugin-provider-retry-advanced@0.2.1 --yes
