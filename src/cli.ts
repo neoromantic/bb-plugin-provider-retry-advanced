@@ -1,6 +1,7 @@
 // Derived from get-bb/bb plugins/provider-retry/src/cli.ts (MIT, desktop-v0.46.1).
-// Changes: command name, connectivity recovery state in `status`, `cancel`
-// also stops recovery of the current failure, new `hold`, `release`, `scan`.
+// Changes: command name, connectivity recovery, watchdog and follow-up state
+// in `status`, `cancel` also stops recovery of the current failure, new
+// `hold`, `release`, `scan`, `watchdog`.
 import { readRetryDiagnostic } from "./diagnostics.js";
 import {
   PluginCliError,
@@ -15,7 +16,14 @@ import {
   listQueuedRetries,
   type QueuedRetry,
 } from "./queued-retries.js";
+import type { FollowUpEntry, FollowUps } from "./follow-ups.js";
 import type { ScanEntry, ScanReport, TransportRecovery } from "./recovery.js";
+import type { StallEntry, StallWatchdog, WatchdogReport } from "./watchdog.js";
+
+export interface CliExtras {
+  watchdog: StallWatchdog;
+  followUps: FollowUps;
+}
 
 export const CLI_NAME = "provider-retry-advanced";
 
@@ -45,6 +53,22 @@ function textRecoveryEntry(entry: ScanEntry): string {
       ? `\t${entry.openBackgroundTasks} background task(s) open`
       : "";
   return `${entry.threadId}\t${entry.state}\t${entry.reason}${background}`;
+}
+
+function textStallEntry(entry: StallEntry): string {
+  return `${entry.threadId}\t${entry.state}\t${entry.reason}\tquiet ${entry.quietMinutes} min`;
+}
+
+function textFollowUp(entry: FollowUpEntry): string {
+  return `${entry.threadId}\t${entry.kind}\t${entry.action}\t${entry.reason}\t${new Date(entry.at).toISOString()}`;
+}
+
+function watchdogLines(report: WatchdogReport | null, threadId: string | null): string[] {
+  if (report === null) return [];
+  if (report.limitMinutes === null) return ["Stall watchdog is off (setting stallWatchdog)."];
+  const entries = report.entries.filter((entry) => threadId === null || entry.threadId === threadId);
+  const head = `Stall watchdog (${report.limitMinutes} min, ${report.running} running, checked ${new Date(report.at).toISOString()})`;
+  return entries.length === 0 ? [`${head}: nothing stalled.`] : [`${head}:`, ...entries.map(textStallEntry)];
 }
 
 /** Connectivity entries only: other failures belong to their own policies. */
@@ -144,13 +168,14 @@ async function cancel(
 export function registerProviderRetryCli(
   bb: BbPluginApi,
   recovery: TransportRecovery,
+  extras: CliExtras,
 ): void {
   bb.cli.register(
     defineCli({
       name: CLI_NAME,
       summary: "Manage automatic provider and connectivity retries",
       description:
-        "A pending retry is an ordinary durable queued row: cancel deletes it, retry sends it now. Turns that failed because the provider or machine was unreachable are resumed once it is reachable again; hold opts a thread out.",
+        "A pending retry is an ordinary durable queued row: cancel deletes it, retry sends it now. Turns that failed because the provider or machine was unreachable are resumed once it is reachable again; stalled running turns are stopped and continued once; hold opts a thread out of everything.",
       usageErrorExitCode: 2,
       commands: {
         status: cliCommand({
@@ -172,6 +197,8 @@ export function registerProviderRetryCli(
             );
             const report = recovery.lastReport();
             const connectivity = recoveryEntries(report, threadId);
+            const watch = extras.watchdog.lastReport();
+            const followUps = extras.followUps.recent(threadId ?? undefined);
             const lines = [
               queued.length === 0
                 ? "No provider retries are pending."
@@ -188,11 +215,18 @@ export function registerProviderRetryCli(
                         `Connectivity recovery (scanned ${new Date(report.at).toISOString()}):`,
                         ...connectivity.map(textRecoveryEntry),
                       ]),
+              ...watchdogLines(watch, threadId),
+              ...(followUps.length === 0 ? [] : ["Follow-ups:", ...followUps.map(textFollowUp)]),
             ];
             return output(
               input.options.json,
               {
                 retries: queued,
+                watchdog:
+                  watch === null
+                    ? null
+                    : { ...watch, entries: watch.entries.filter((entry) => threadId === null || entry.threadId === threadId) },
+                followUps: { recent: followUps, pendingUnfinished: extras.followUps.pendingUnfinished() },
                 connectivity: report === null
                   ? null
                   : {
@@ -259,7 +293,7 @@ export function registerProviderRetryCli(
             ),
         }),
         hold: cliCommand({
-          summary: "Never resume this thread automatically after a connectivity failure",
+          summary: "Never retry, restart or follow up this thread automatically",
           positionals: [THREAD_ID_POSITIONAL],
           options: { json: JSON_OPTION },
           async run(input, context) {
@@ -289,6 +323,14 @@ export function registerProviderRetryCli(
               report,
               `Connectivity recovery armed.\n${connectivity.map(textRecoveryEntry).join("\n")}${connectivity.length > 0 ? "\n" : ""}`,
             );
+          },
+        }),
+        watchdog: cliCommand({
+          summary: "Run the stalled-turn check now",
+          options: { json: JSON_OPTION },
+          async run(input) {
+            const report = await extras.watchdog.check();
+            return output(input.options.json, report, `${watchdogLines(report, null).join("\n")}\n`);
           },
         }),
         scan: cliCommand({

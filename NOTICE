@@ -12,10 +12,35 @@ Modified from upstream (marked at the top of each file):
   server.ts, src/cli.ts, test/stock.test.ts (ported from server.test.ts)
 New in this fork:
   src/transport.ts, src/probe.ts, src/recovery.ts, test/fake-core.ts,
+  src/watchdog.ts, src/continuations.ts, src/follow-ups.ts,
   test/recovery.test.ts, test/transport.test.ts, test/review-cases.test.ts, test/reviewer-refresh.test.ts,
-  test/setup.ts,
+  test/setup.ts, test/stall-and-follow-ups.test.ts, test/interrupted-workflows.test.ts,
   skills/provider-retry-advanced/SKILL.md
 
 test/fake-core.ts restates BB core's retry rules from bb-app 0.46.1
 (server/src/services/threads/turn-retry.ts, turn-failed.ts), same license.
 The fork's additions are released under the same MIT License.
+
+The server bundle includes Zod 4.6.5 (https://github.com/colinhacks/zod):
+
+MIT License
+
+Copyright (c) 2025 Colin McDonnell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

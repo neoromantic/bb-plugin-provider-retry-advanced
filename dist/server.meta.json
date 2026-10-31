@@ -1,11 +1,11 @@
 {
   "sdkMajor": 0,
-  "sdkVersion": "0.6.79",
+  "sdkVersion": "0.6.94",
   "artifactFormatVersion": 1,
   "pluginId": "provider-retry-advanced",
-  "pluginVersion": "0.1.2",
+  "pluginVersion": "0.2.1",
   "builtWith": {
-    "bbVersion": "0.47.1",
-    "pluginSdkVersion": "0.6.79"
+    "bbVersion": "0.48.0",
+    "pluginSdkVersion": "0.6.94"
   }
 }

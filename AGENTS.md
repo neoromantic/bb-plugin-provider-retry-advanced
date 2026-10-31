@@ -58,7 +58,7 @@ A server-side BB plugin (TypeScript, Bun for tooling). BB loads `server.ts` thro
 - Install: `bun install --frozen-lockfile`
 - Check: `bun run check` (TypeScript 7, as upstream BB)
 - Test: `bun test` (offline; `test/fake-core.ts` restates BB core's retry and dispatch-hook rules)
-- Build: `bun run bundle` (`bb plugin build .`, needs a local BB 0.46.1+; then replaces the
+- Build: `bun run bundle` (official `bb-app@0.48.0` CLI; then replaces the
   checkout's absolute path in the source map). Commit `dist/` with every source change; CI does
   not run BB.
 - `src/retry-policy.ts`, `src/retry-contract.ts`, `src/queued-retries.ts` and `src/diagnostics.ts`

@@ -34,7 +34,7 @@ it("a newer failure invalidates an older chain refresh already in flight", async
   } as never });
   await host.bb.storage.kv.set("armed", { at: 0 });
   const recovery = createTransportRecovery(host.bb, {
-    now: () => core.now, enabled: () => true, probe: async () => ({ reachable: true, detail: "HTTP 405" }),
+    now: () => core.now, enabled: () => true, workflowRecovery: () => false, probe: async () => ({ reachable: true, detail: "HTTP 405" }),
   });
   await recovery.init();
   core.hook = (context) => recovery.decideDispatch(context as never);
