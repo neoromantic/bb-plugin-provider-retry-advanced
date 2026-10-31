@@ -2,7 +2,7 @@
 
 ## 0.2.1
 
-First public candidate of the 0.2 line; 0.2.0 was not published.
+First public release of the 0.2 line; 0.2.0 was not published.
 
 With an existing registration retained, the armed state, holds and settings are kept, and every new feature below
 is **off by default**, so an armed 0.1 install behaves as before until you turn one on

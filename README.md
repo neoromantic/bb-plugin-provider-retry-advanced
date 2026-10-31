@@ -19,15 +19,16 @@ send back a failed request that later notifications pushed aside.
 
 Needs BB 0.46.1 or later. Run one retry plugin, not both, so disable the bundled one first:
 
-0.2.1 is not published yet. The Git command requires the `v0.2.1` release tag.
-
 ```sh
 bb plugin disable provider-retry
 bb plugin install git:https://github.com/neoromantic/bb-plugin-provider-retry-advanced.git@semver:^0.2.1 --yes
 ```
 
-The planned exact npm target is `npm:bb-plugin-provider-retry-advanced@0.2.1`;
-it is not available until the package is published.
+Or install the exact npm version:
+
+```sh
+bb plugin install npm:bb-plugin-provider-retry-advanced@0.2.1 --yes
+```
 
 ### Existing installations
 
