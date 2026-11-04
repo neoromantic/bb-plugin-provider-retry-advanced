@@ -19,6 +19,8 @@ send back a failed request that later notifications pushed aside.
 
 Needs BB 0.46.1 or later. Run one retry plugin, not both, so disable the bundled one first:
 
+In BB, disable **Provider retry**, then open **Community Plugins → Provider retry advanced → Install**. Or run `bb plugin disable provider-retry` followed by `bb plugin install provider-retry-advanced`. For Git:
+
 ```sh
 bb plugin disable provider-retry
 bb plugin install git:https://github.com/neoromantic/bb-plugin-provider-retry-advanced.git@semver:^0.2.1 --yes
