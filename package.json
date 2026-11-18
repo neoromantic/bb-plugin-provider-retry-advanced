@@ -49,15 +49,21 @@
   },
   "devDependencies": {
     "@get-bb/plugin-sdk": "0.6.49",
+    "@interfere/landmines": "0.1.0",
     "@types/bun": "1.3.13",
     "cron-parser": "5.5.0",
     "hono": "4.11.9",
     "knip": "6.45.1",
+    "oxfmt": "0.79.0",
+    "oxlint": "1.94.0",
     "typescript": "7.0.2"
   },
   "scripts": {
-    "check": "tsc --noEmit && bun run check:knip",
+    "check": "bun run format:check && bun run lint && tsc --noEmit && bun run check:knip",
     "check:knip": "knip",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint --deny-warnings",
     "test": "bun test",
     "bundle": "bunx --package bb-app@0.48.0 bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
   }

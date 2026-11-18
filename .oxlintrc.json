@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["./.oxlintrc.devkit.jsonc"],
+  "ignorePatterns": ["dist/**"],
+  "overrides": [
+    {
+      "files": ["src/diagnostics.ts", "src/queued-retries.ts", "src/retry-policy.ts"],
+      "rules": {
+        "landmines-types/no-explicit-return-types": "off"
+      }
+    }
+  ]
+}
