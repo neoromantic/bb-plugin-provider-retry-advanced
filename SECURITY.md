@@ -4,7 +4,7 @@
 ## Reporting a vulnerability
 
 Please report security problems privately through
-[GitHub private vulnerability reporting](https://github.com/{{full_name}}/security/advisories/new).
+[GitHub private vulnerability reporting](https://github.com/neoromantic/bb-plugin-provider-retry-advanced/security/advisories/new).
 Don't open a public issue for them.
 
 Include what you found, how to reproduce it and which version you used. You should get a reply

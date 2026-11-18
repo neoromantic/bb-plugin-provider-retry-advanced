@@ -56,7 +56,9 @@ A server-side BB plugin (TypeScript, Bun for tooling). BB loads `server.ts` thro
 `dist/server.js`; `dist/` is committed because BB's Git installs need the built artifact.
 
 - Install: `bun install --frozen-lockfile`
-- Check: `bun run check` (TypeScript 7, as upstream BB)
+- Check: `bun run check` (TypeScript 7, as upstream BB, then `check:knip`: Knip finds unused
+  files and dependencies and unlisted or unresolved imports; `knip.json` skips the built
+  `dist/` and the `bb-app` CLI that `bundle` fetches with `bunx`)
 - Test: `bun test` (offline; `test/fake-core.ts` restates BB core's retry and dispatch-hook rules)
 - Build: `bun run bundle` (official `bb-app@0.48.0` CLI; then replaces the
   checkout's absolute path in the source map). Commit `dist/` with every source change; CI does
