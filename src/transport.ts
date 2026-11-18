@@ -21,7 +21,6 @@ export interface EventLike {
   data: unknown;
 }
 
-/** Provider ids this plugin knows a reachability probe for. */
 const PROVIDER_TARGETS: Record<string, ProbeTargetId> = {
   "claude-code": "anthropic",
   codex: "chatgpt",
@@ -31,22 +30,10 @@ export function probeTargetForProvider(providerId: string) {
   return PROVIDER_TARGETS[providerId] ?? null;
 }
 
-/** Categories a provider reports for a lost or refused connection. */
 const TRANSPORT_CATEGORIES = new Set<string>(["connection-failed", "stream-disconnected"]);
 
-/**
- * Categories whose structured class is not about reachability, whatever the
- * message says. A plain 5xx stays here unless its text names a network or
- * gateway reachability failure (see NETWORK_SIGNATURE).
- */
 const AMBIGUOUS_CATEGORIES = new Set<string>(["internal", "unknown", "none"]);
 
-/**
- * Text that only a reachability failure produces: Account Pooler's own 502
- * for an upstream it could not reach, Node/undici socket errors, and the
- * provider CLIs' connection errors. A provider's own "Internal server error"
- * or "Overloaded" never matches.
- */
 const NETWORK_SIGNATURE =
   /Account Pooler could not reach|\bE(?:TIMEDOUT|CONNRESET|CONNREFUSED|CONNABORTED|NOTFOUND|AI_AGAIN|NETUNREACH|NETDOWN|HOSTUNREACH|PIPE)\b|UND_ERR_(?:CONNECT_TIMEOUT|SOCKET|HEADERS_TIMEOUT|BODY_TIMEOUT)|socket hang up|fetch failed|getaddrinfo|Connection error|Request timed out|error sending request|network is unreachable|stream disconnected/i;
 

@@ -1,8 +1,3 @@
-// The six failing cases from the independent review of rev 2 (thr review, 2026-10-24), kept as acceptance tests.
-// Adaptations, all to match real core/CLI behavior: the fake core now runs the plugin's message.dispatch hook on
-// drains (core does, see dispatch-hooks.ts), setHostOnline/retry are awaited, a hold is placed through the CLI
-// (the only way a hold is made), case 6 arms first so it tests the availability-lookup window, not the arm gate,
-// and plugin and fake core share one clock. The last three cases are the rev 3 review's boundary tests, unchanged.
 import { expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createPlugin } from "../server.js";
@@ -37,7 +32,7 @@ async function queuedFailure() {
 it("hold removes an already queued connectivity retry before host reconnect", async () => {
   const { core, host } = await queuedFailure();
   await host.harness.runCli(["hold", "review-thread"]);
-  expect(core.queue).toHaveLength(0); // withdrawn by hold itself, not only at the next scan
+  expect(core.queue).toHaveLength(0);
   await host.harness.runCli(["scan"]);
   expect(core.queue).toHaveLength(0);
 });
@@ -56,7 +51,6 @@ it("removes an old retry when a different turn has already failed", async () => 
     rateLimits: null,
     attemptNumber: 1,
   });
-  // Even before any scan, a drain must not run the superseded retry.
   core.now += 1;
   await core.setHostOnline("review-host", true);
   expect(core.thread("review-thread").status).toBe("error");
@@ -92,7 +86,7 @@ it("does not wake a stopped thread when host reconnects before the next scan", a
   await core.setHostOnline("review-host", true);
   expect(core.thread("review-thread").status).toBe("idle");
   await withdrawn;
-  expect(core.queue).toHaveLength(0); // and the withdrawn row is taken off the queue
+  expect(core.queue).toHaveLength(0);
 });
 
 it("fresh install observes overload failures until arm as promised", async () => {
@@ -151,8 +145,6 @@ it("honours a hold placed while a stock availability RPC is pending", async () =
   expect(host.harness.inspection.sdk.callsTo("threads.retry")).toHaveLength(0);
 });
 
-// --- rev 3 review boundary cases (verbatim) ---
-
 it("does not dispatch a superseded row claimed during the first scan after reload", async () => {
   const core = new FakeCore();
   core.addThread({ id: "review-reload", providerId: "codex", environmentHostId: "review-host" });
@@ -170,15 +162,12 @@ it("does not dispatch a superseded row claimed during the first scan after reloa
   const row = core.queue[0]!;
   core.startTurn("review-reload", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-reload", FAILURES.unauthorized);
-  // Reload loses lastFailureAt. A drain claims the old row while the new
-  // plugin is loading; its hook waits for the first scan to read the state.
   const reloaded = await host.harness.lifecycle.reload(factory);
   core.hook = (c) => reloaded.harness.registrations.hooks["message.dispatch"]!(c as never);
-  core.hostsOnline.set("review-host", true); // reconnect made the row drainable
+  core.hostsOnline.set("review-host", true);
   row.state = "claimed";
   const deferred = await core.runHook("review-reload", [row]);
   expect(deferred.action).toBe("wait");
-  // Core may still be finishing/requeueing the claim while that scan runs.
   await reloaded.harness.runCli(["scan"]);
   expect(core.queue).toHaveLength(1);
   row.state = "queued";
@@ -199,8 +188,6 @@ it("does not require a later millisecond to identify a superseding failed reques
     pluginId: "provider-retry-advanced",
     sdk: core.sdk() as never,
   });
-  // The API row and the event handler can have the same Date.now() value;
-  // request sequence/identity still distinguishes the new failed request.
   await createPlugin({
     now: () => core.now,
     probe: async () => ({ reachable: true, detail: "HTTP 405" }),
@@ -227,8 +214,6 @@ it("unarmed installation does not dispatch an existing automatic retry after the
   core.addThread({ id: "review-unarmed", providerId: "codex" });
   const requestId = core.startTurn("review-unarmed", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-unarmed", FAILURES.overloaded);
-  // An ordinary durable row can survive disabling/removing the old recovery
-  // owner, and uses exactly the stock reason that this plugin adopts as own.
   await core.retry({
     threadId: "review-unarmed",
     turnRequestId: requestId,

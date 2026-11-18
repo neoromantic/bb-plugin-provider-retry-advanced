@@ -30,7 +30,6 @@ export function unfinishedText(args: {
 }) {
   const what = args.automation ? "an automation run" : "a message";
   const head = `${UNFINISHED_TAG} The request sent at ${new Date(args.failedAt).toISOString().slice(0, 16).replace("T", " ")} UTC (${what}) failed with a provider error before it finished, and later system notifications took its turn, so it was never completed. Finish that request now; check what was already done first. ${CHECK_STATE_HINT}`;
-  // Input the provider never accepted is not in its session: repeat it, as core's own retry does.
   return args.accepted || args.input === "" ? head : `${head}\n\nThe request was:\n\n${args.input}`;
 }
 
@@ -163,7 +162,6 @@ export async function requestsAfter(bb: BbPluginApi, threadId: string, afterSeq:
   ).map(parseRequest);
 }
 
-/** Items that are the model's own output, not a tool it runs. */
 const MODEL_ITEM_TYPES = new Set(["agentMessage", "reasoning", "userMessage"]);
 
 function itemOf(event: RawEvent) {

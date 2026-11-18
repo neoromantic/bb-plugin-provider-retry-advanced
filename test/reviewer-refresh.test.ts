@@ -1,4 +1,3 @@
-// Rev 4 closure-check blocker, from the independent review (verbatim).
 import { expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createTransportRecovery } from "../src/recovery.js";
@@ -56,11 +55,9 @@ it("a newer failure invalidates an older chain refresh already in flight", async
   core.hook = (context) => recovery.decideDispatch(context as never);
   expect((await core.runHook("review-refresh", [row])).action).toBe("wait");
   await capturedRequest;
-  // A later manual turn is legal while an older retry is waiting. It fails
-  // before the old refresh response is delivered to the plugin.
   core.startTurn("review-refresh", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-refresh", FAILURES.unauthorized);
-  recovery.noteFailure("review-refresh"); // exactly server.ts's event wiring
+  recovery.noteFailure("review-refresh");
   const refreshed = nextRecheck(host.bb);
   release();
   await refreshed;

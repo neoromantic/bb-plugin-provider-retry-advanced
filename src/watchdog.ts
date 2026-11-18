@@ -15,23 +15,17 @@ import {
 /** How often the watchdog looks at running turns. */
 export const WATCHDOG_INTERVAL_MS = 60_000;
 
-/** The wall clock ran this far ahead of the monotonic clock between two checks: the Mac slept. */
 const SLEEP_GAP_MS = 60_000;
 
-/** No check for this long means the process was suspended, whatever the clocks say. */
 const MAX_CHECK_GAP_MS = 10 * 60_000;
 
-/** How long to wait for a stop to settle before leaving the continue to a later check. */
 const STOP_SETTLE_MS = 30_000;
 const STOP_POLL_MS = 1_000;
 
-/** A stop whose continue could not be sent yet is retried by later checks for this long. */
 const PENDING_CONTINUE_MS = 10 * 60_000;
 
-/** Restart records are kept this long; a turn that stalls again later is a new stall. */
 const RECORD_TTL_MS = 2 * 24 * 60 * 60_000;
 
-/** BB Workflows owns its hidden workers; their stalls are the engine's to handle. */
 const WORKFLOW_ENGINE_PLUGIN_ID = "workflows";
 
 export const STALL_RETRY_REASON = "Stalled turn restarted";
@@ -60,7 +54,6 @@ export interface WatchdogReport {
 }
 
 interface StallRecord {
-  /** The request whose turn stalled; it is restarted once. */
   requestId: string;
   stoppedAt: number;
   continued: boolean;
@@ -103,11 +96,6 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
   let running: Promise<WatchdogReport> | null = null;
   let last: WatchdogReport | null = null;
 
-  /**
-   * Quiet time only counts while BB is awake. A sleeping Mac produces no
-   * events and runs no checks, so after a wake every running turn looks
-   * silent for hours; counting restarts at the wake instead.
-   */
   function observeClock() {
     const wall = options.now();
     const mono = options.monotonic();
@@ -137,7 +125,6 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     await bb.storage.kv.set(`decision:${threadId}`, diagnostic);
   }
 
-  /** Sends the one continue for a stopped turn once the thread is idle; returns what happened. */
   async function sendContinue(threadId: string, record: StallRecord) {
     const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
     if (
@@ -148,17 +135,14 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     ) {
       return "stop-not-settled";
     }
-    // Failed while stopping: the connectivity scan and the stock policy own a failed thread.
     if (thread.status !== "idle") {
       await saveRecord(threadId, { ...record, continued: true });
       return `stopped:${thread.status}`;
     }
-    // A message that ran after the stop already moved the thread on.
     if ((await latestRequest(bb, threadId))?.requestId !== record.requestId) {
       await saveRecord(threadId, { ...record, continued: true });
       return "stopped:thread-moved-on";
     }
-    // Work queued on the thread runs now that it is idle and continues it anyway.
     if ((await bb.sdk.threads.queue.list({ threadId })).length > 0) {
       await saveRecord(threadId, { ...record, continued: true });
       return "stopped:queued-message-continues";
@@ -188,7 +172,6 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     return { at: Math.max(latest?.createdAt ?? 0, countingSince), seq: latest?.seq ?? 0 };
   }
 
-  /** Why this quiet running turn must be left alone, or null when it may be restarted. */
   async function leaveAlone(thread: ThreadState, afterSeq: number) {
     if (thread.status !== "active") return `thread-${thread.status}`;
     if (options.isHeld(thread.id)) return "held";
@@ -235,7 +218,6 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
       entry.reason = "not-armed (run: bb provider-retry-advanced arm)";
       return entry;
     }
-    // The checks above took several reads; act only if nothing moved meanwhile.
     const again = await quietSince(threadId);
     if (again.seq !== quiet.seq || (await hasPendingInteraction(bb, threadId))) {
       entry.reason = "moved-meanwhile";
@@ -274,7 +256,6 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     };
     if (limitMs === null) return report;
 
-    // A stop that had not settled at the last check gets its continue now.
     for (const [threadId, record] of records) {
       if (record.continued) continue;
       if (at - record.stoppedAt > PENDING_CONTINUE_MS || options.isHeld(threadId)) {

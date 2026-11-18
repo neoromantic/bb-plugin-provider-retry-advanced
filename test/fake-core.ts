@@ -1,22 +1,3 @@
-/**
- * An in-memory stand-in for the parts of BB core this plugin talks to.
- *
- * `retry` ports core's own rules from bb-app 0.46.1
- * (server/src/services/threads/turn-retry.ts and turn-failed.ts): only a
- * thread in `error` with a failed most-recent request can be retried; a named
- * `turnRequestId` must be that request; one live retry per original request
- * (`retry_already_queued`); accepted input continues with an agent-only
- * "Please continue.", unaccepted input is re-sent; the failed request's
- * model, reasoning level, service tier and permission mode are replayed; a
- * busy or offline thread queues the retry as a `retry` row. Like core, every
- * inline attempt and every queued drain first runs the `message.dispatch`
- * hook (the plugin's, wired by the test), except a user's explicit Send-now.
- * Tests drive the provider side (accept, fail, complete) explicitly.
- *
- * Limits: one process, no admission lock, no claimed-row concurrency (tests
- * that need a claimed row set its state by hand) and no provider: "same provider session" here only means core re-used the thread's
- * session id, which the real core does through its normal send path.
- */
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
@@ -82,6 +63,26 @@ export class CoreHttpError extends Error {
 
 export const CONTINUE_ACCEPTED_TURN_TEXT = "Please continue.";
 
+/**
+ * An in-memory stand-in for the parts of BB core this plugin talks to.
+ *
+ * `retry` ports core's own rules from bb-app 0.46.1
+ * (server/src/services/threads/turn-retry.ts and turn-failed.ts): only a
+ * thread in `error` with a failed most-recent request can be retried; a named
+ * `turnRequestId` must be that request; one live retry per original request
+ * (`retry_already_queued`); accepted input continues with an agent-only
+ * "Please continue.", unaccepted input is re-sent; the failed request's
+ * model, reasoning level, service tier and permission mode are replayed; a
+ * busy or offline thread queues the retry as a `retry` row. Like core, every
+ * inline attempt and every queued drain first runs the `message.dispatch`
+ * hook (the plugin's, wired by the test), except a user's explicit Send-now.
+ * Tests drive the provider side (accept, fail, complete) explicitly.
+ *
+ * Limits: one process, no admission lock, no claimed-row concurrency (tests
+ * that need a claimed row set its state by hand) and no provider: "same
+ * provider session" here only means core re-used the thread's session id,
+ * which the real core does through its normal send path.
+ */
 export class FakeCore {
   threads = new Map<string, Thread>();
   events = new Map<string, FakeEvent[]>();
@@ -391,7 +392,6 @@ export class FakeCore {
     if (this.hook === null) return { action: "proceed" } as HookDecision;
     const dto: Record<string, unknown> = { ...this.thread(threadId) };
     for (const field of LIST_ONLY_FIELDS) delete dto[field];
-    // core's combined input: the rows' content, or the inline message being sent.
     const blocks = rows.length > 0 ? rows.flatMap((row) => row.content) : inline;
     const text = blocks
       .filter((block) => block.type === "text")
@@ -436,7 +436,6 @@ export class FakeCore {
     }
   }
 
-  // --- core retry (turn-retry.ts) -----------------------------------------
   private retriesInFlight = new Set<string>();
 
   private failedTurn(threadId: string) {
@@ -516,7 +515,6 @@ export class FakeCore {
       const thread = this.thread(args.threadId);
       const hostOnline = this.hostsOnline.get(thread.environmentHostId ?? "") !== false;
       const future = args.sendAt !== undefined && args.sendAt > this.now;
-      // dispatch-attempt.ts runs the hook pass before scheduling or host waits.
       const decision = await this.runHook(args.threadId, []);
       if (decision.action === "reject")
         throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
@@ -569,7 +567,6 @@ export class FakeCore {
     if (online) await this.drain();
   }
 
-  // --- the SDK surface the plugin uses ------------------------------------
   sdk() {
     return {
       threads: {
@@ -605,7 +602,6 @@ export class FakeCore {
           [...this.threads.values()]
             .filter((t) => t.status === "active" && t.archivedAt === null && t.deletedAt === null)
             .map((t) => ({ id: t.id, hostId: t.environmentHostId })),
-        // core: a manual stop interrupts the running turn and settles the thread idle.
         stop: async ({ threadId }: { threadId: string }) => {
           const thread = this.thread(threadId);
           if (thread.status !== "active") return { ok: true };
@@ -617,7 +613,6 @@ export class FakeCore {
           this.interruptTurn(threadId, "manual-stop");
           return { ok: true };
         },
-        // core's send: hook pass, then dispatch, or a queued row behind a busy thread.
         send: async (args: {
           threadId: string;
           input: Array<Record<string, unknown>>;

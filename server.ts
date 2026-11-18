@@ -1,9 +1,3 @@
-// Derived from get-bb/bb plugins/provider-retry/server.ts (MIT, desktop-v0.46.1).
-// Changes: the stock overload/subscription-limit policy runs only for those
-// failures; connectivity (transport) failures are recovered by a fixed 60s
-// scan that probes the provider path and asks core to retry natively; a
-// stalled-turn watchdog and two follow-ups (continuation check, unfinished
-// request) keep stalled work moving without a person nudging it.
 import { readRetryDiagnostic, retryDiagnosticContract } from "./src/diagnostics.js";
 import {
   retryAvailabilityMethod,
@@ -150,8 +144,6 @@ export function createPlugin(options: PluginOptions = {}) {
       "decision.get": ({ threadId }) => readRetryDiagnostic(bb, threadId),
     });
 
-    // Stock policy, unchanged, for the two failure kinds it owns. Every other
-    // failure is classified by the connectivity scan from the turn's events.
     await recovery.init();
     await watchdog.init();
     await followUps.init();
@@ -165,7 +157,6 @@ export function createPlugin(options: PluginOptions = {}) {
       if (event.errorInfo?.category !== "overloaded" && !isRateLimitFailure(event)) {
         return;
       }
-      // Fork: nothing is retried automatically before `arm`, or on a held thread.
       const gate = () =>
         !recovery.isArmed() ? "not-armed" : recovery.isHeld(event.threadId) ? "held" : null;
       const declineFor = async (reason: string) => {
@@ -186,9 +177,6 @@ export function createPlugin(options: PluginOptions = {}) {
         });
         for (const source of sources) {
           try {
-            // Fork: inferring callRpc's output from the zod schema exceeds
-            // TypeScript's instantiation depth outside the BB monorepo, so the
-            // answer is parsed with the same schema the host validates with.
             const result = retryAvailabilitySchema.parse(
               await bb.sdk.plugins.callRpc({
                 pluginId: source.pluginId,
@@ -222,7 +210,6 @@ export function createPlugin(options: PluginOptions = {}) {
           availability,
           decision,
         });
-      // Fork: the availability lookup can take seconds; re-check the gate after it.
       const after = gate();
       if (after !== null) return declineFor(after);
       if (decision.kind === "decline") {
@@ -241,15 +228,10 @@ export function createPlugin(options: PluginOptions = {}) {
       await recordDecision();
     });
 
-    // Core asks before every attempt and every queued drain; this is where a
-    // hold, cancel, stop or newer failure stops an already queued retry.
     bb.experimental_hooks.on("message.dispatch", (context) => recovery.decideDispatch(context));
 
-    // A retry row the user deleted is a decision about that failure.
     bb.events.on("message.cancelled", ({ entry }) => recovery.onRetryRowCancelled(entry));
 
-    // A thread became idle: maybe a resumed turn only promised to continue,
-    // or a failed request was superseded and never retried.
     bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
       await followUps
         .onIdle(thread as never, lastAssistantText)

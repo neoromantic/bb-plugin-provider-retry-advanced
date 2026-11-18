@@ -1,7 +1,3 @@
-// Derived from get-bb/bb plugins/provider-retry/src/cli.ts (MIT, desktop-v0.46.1).
-// Changes: command name, connectivity recovery, watchdog and follow-up state
-// in `status`, `cancel` also stops recovery of the current failure, new
-// `hold`, `release`, `scan`, `watchdog`.
 import { readRetryDiagnostic } from "./diagnostics.js";
 import {
   PluginCliError,
@@ -69,7 +65,6 @@ function watchdogLines(report: WatchdogReport | null, threadId: string | null) {
     : [`${head}:`, ...entries.map(textStallEntry)];
 }
 
-/** Connectivity entries only: other failures belong to their own policies. */
 function recoveryEntries(report: ScanReport | null, threadId: string | null) {
   return (report?.entries ?? []).filter(
     (entry) =>
@@ -119,11 +114,6 @@ async function sendNow(bb: BbPluginApi, threadId: string, json: boolean) {
   );
 }
 
-/**
- * Deletes a pending retry row, and stops connectivity recovery of the
- * thread's current failed turn so the next scan does not queue it again.
- * A later, different failure on the thread is eligible again.
- */
 async function cancel(
   bb: BbPluginApi,
   recovery: TransportRecovery,
@@ -137,7 +127,6 @@ async function cancel(
       queuedMessageId: queued.id,
     });
   }
-  // An unknown or non-failed thread simply has no failure to stop.
   const skipped = await recovery.skipCurrentFailure(threadId).catch(() => null);
   if (queued === null && skipped === null) {
     throw new PluginCliError(`No pending provider retry or failed turn exists for ${threadId}.`, {

@@ -21,26 +21,14 @@ import {
 import { isRateLimitFailure } from "./retry-policy.js";
 import { classifyFailedTurn } from "./transport.js";
 
-/** BB Workflows owns its hidden workers. */
 const WORKFLOW_ENGINE_PLUGIN_ID = "workflows";
 
-/** An unfinished request older than this is no longer followed up. */
 const UNFINISHED_TTL_MS = 24 * 60 * 60_000;
 
-/** Longest final message that still counts as "only a promise to continue". */
 const SHORT_REPLY_CHARS = 400;
 
-/**
- * Most tool calls a resumed turn may have made and still count as having
- * stopped at a promise; a turn that did more is treated as real work.
- */
 const MAX_TOOLS_BEFORE_PROMISE = 5;
 
-/**
- * A reply that opens with "Продолжу / Продолжаю / I'll continue / Resuming…".
- * Only the opening is matched and only present or future forms, so a real
- * answer ("Готово…", "Продолжили, нашлась проблема…") does not count.
- */
 const PROMISE_TO_CONTINUE =
   /^[\s*_>"«-]*(?:(?:ок|ok|okay|хорошо|ладно)[,.!]?\s+)?(?:продолж(?:у|аю|им|аем)(?![а-яё])|возобновл(?:яю|ю)(?![а-яё])|continuing\b|resuming\b|i(?:'ll| will) (?:now )?(?:continue|resume|pick)|let me (?:continue|resume|pick)|picking up)/i;
 
@@ -67,7 +55,6 @@ interface UnfinishedRecord {
   failedAt: number;
   automation: boolean;
   accepted: boolean;
-  /** The request's text, kept only when the provider never accepted it. */
   input: string;
   execution: Execution | null;
 }
@@ -114,7 +101,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
     note({ threadId, kind: "unfinished", action: "dropped", reason });
   }
 
-  /** Whether the failed request's turn failed for a reason the retry policies handle (connectivity, overload, rate limit). */
   async function retryableFailure(event: PluginTurnFailedEvent, request: TurnRequest) {
     if (event.errorInfo?.category === "overloaded" || isRateLimitFailure(event)) return true;
     const thread = (await bb.sdk.threads.get({ threadId: event.threadId })) as unknown as {
@@ -154,12 +140,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
     return classifyFailedTurn({ providerId: thread.providerId, events }).kind === "transport";
   }
 
-  /**
-   * A failed request whose retry never ran because later system notifications
-   * (child threads finishing or failing) took the thread's turn first: core
-   * only retries the most recent turn, so the request is silently lost. This
-   * sends it back once, when the thread is idle. Returns true when it sent.
-   */
   async function followUpUnfinished(thread: IdleThread, record: UnfinishedRecord) {
     const threadId = thread.id;
     if (options.now() - record.failedAt > UNFINISHED_TTL_MS) {
@@ -201,7 +181,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
         return false;
       }
     }
-    // Something else will run on the thread first, or it waits for a person: decide on a later idle.
     if ((thread.queuedMessageCount ?? 0) > 0) return false;
     if (await hasPendingInteraction(bb, threadId)) return false;
     if (
@@ -233,11 +212,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
     return true;
   }
 
-  /**
-   * After an automatic retry or restart, a turn that ends on a short "I'll
-   * continue" after at most a few tool calls gets one more continue. Once per
-   * continuation turn; this plugin never answers its own nudge.
-   */
   async function checkContinuation(thread: IdleThread, text: string | null) {
     const threadId = thread.id;
     const request = await latestRequest(bb, threadId);
@@ -287,7 +261,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
     },
     async noteFailure(event) {
       if (!options.unfinishedFollowUp()) return;
-      // A notification can take the thread's turn within seconds, so look a few requests back.
       const recentRequests = await listEvents(bb, {
         threadId: event.threadId,
         types: ["client/turn/requested"],
@@ -297,7 +270,6 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
       const found = recentRequests.map(parseRequest).find((r) => r.requestId === event.requestId);
       if (found === undefined) return;
       const request = found;
-      // Only a request a person, an automation or another thread sent; a retry continues a chain already tracked.
       if (
         request.retryOfRequestId !== null ||
         request.initiator === "system" ||

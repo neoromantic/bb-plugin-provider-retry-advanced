@@ -94,7 +94,6 @@ describe("connectivity recovery", () => {
     ]);
     expect(t.core.thread("thr_a").status).toBe("active");
 
-    // Next tick reads current native state: nothing failed, nothing probed.
     const after = await t.scan();
     expect(after.entries).toEqual([]);
     expect(t.retries()).toHaveLength(1);
@@ -146,7 +145,7 @@ describe("connectivity recovery", () => {
       execution: CODEX_HIGH,
     });
     const host = createFakePluginHost({ pluginId: PLUGIN_ID, sdk: core.sdk() as never });
-    await host.bb.storage.kv.set("armed", { at: 0 }); // armed on an earlier load
+    await host.bb.storage.kv.set("armed", { at: 0 });
     await createPlugin({ probe: async () => ({ reachable: true, detail: "HTTP 405" }) })(host.bb);
     const resumed = core.nextTurn("thr_old");
     const { controller, done } = host.harness.behavior.runService("connectivity-recovery");
@@ -231,7 +230,6 @@ describe("connectivity recovery", () => {
     expect(entry(report, "thr_pending")?.reason).toBe("pending-interaction");
     expect(entry(report, "thr_worker")?.reason).toBe("workflow-engine-owned");
 
-    // Release makes the held thread eligible again.
     expect((await t.host.harness.runCli(["release", "thr_held"])).exitCode).toBe(0);
     expect(entry(await t.scan(), "thr_held")?.state).toBe("resumed");
   });
@@ -252,7 +250,6 @@ describe("connectivity recovery", () => {
   it("never duplicates a queued or concurrent retry", async () => {
     const t = await setup();
     failedThread(t.core, "thr_q");
-    // An existing (stock or manual) retry row on the thread wins.
     await t.core.retry({
       threadId: "thr_q",
       sendAt: t.core.now + 3_600_000,
@@ -292,7 +289,6 @@ describe("connectivity recovery", () => {
         input: [{ type: "text", text: ORIGINAL_TASK, mentions: [] }],
         execution: CODEX_HIGH,
       });
-      // Core's events for a machine that came back with a new daemon (no `cause`).
       t.core.append(id, "turn/completed", {
         providerThreadId: `session-${id}`,
         status: "interrupted",
@@ -328,13 +324,11 @@ describe("connectivity recovery", () => {
     t.core.interruptTurn("thr_s", "host-daemon-restarted", "host-connection-lost");
     await t.scan();
     expect(t.core.queue).toHaveLength(1);
-    // The user stops the thread instead: the waiting retry must not wake it later.
     t.core.setThread("thr_s", { status: "idle" });
     const report = await t.scan();
     expect(report.staleRowsRemoved).toBe(1);
     expect(t.core.queue).toEqual([]);
 
-    // A row the user deleted from the queue card is a decision about that failure.
     failedThread(t.core, "thr_u");
     await t.core.setHostOnline("host_local", false);
     await t.scan();
@@ -345,7 +339,6 @@ describe("connectivity recovery", () => {
     expect(entry(await t.scan(), "thr_u")?.reason).toBe("cancelled");
     expect(t.retries()).toHaveLength(2);
 
-    // A later, different failure on that thread is eligible again.
     t.core.startTurn("thr_u", {
       input: [{ type: "text", text: "new message", mentions: [] }],
       execution: OPUS_ULTRACODE,
@@ -370,7 +363,6 @@ describe("connectivity recovery", () => {
     expect(continued.input).toEqual([
       { type: "text", text: CONTINUE_ACCEPTED_TURN_TEXT, mentions: [], visibility: "agent-only" },
     ]);
-    // Input the provider never accepted is re-sent, not replaced by a nudge.
     const resent = t.core.lastRequest("thr_n")!.data;
     expect(resent.execution).toEqual(CODEX_HIGH);
     expect(resent.input).toEqual([
@@ -401,8 +393,6 @@ describe("connectivity recovery", () => {
     expect(entry(report, "thr_wf")).toMatchObject({ state: "resumed", openBackgroundTasks: 1 });
 
     const events = t.core.events.get("thr_wf")!;
-    // History (completed steps, the running workflow) is untouched; the only
-    // additions are core's own retry dispatch into the same provider session.
     expect(events.slice(0, eventsBefore.length).map((e) => e.id)).toEqual(eventsBefore);
     const added = events.slice(eventsBefore.length).map((e) => e.type);
     expect(added).toEqual(["client/turn/requested", "turn/started", "turn/input/accepted"]);
@@ -542,7 +532,6 @@ describe("dispatch-time enforcement", () => {
     for (let i = 0; i < 600; i++)
       t.core.append("thr_noise", "provider/error", FAILURES.providerInternal500);
     t.core.failTurn("thr_noise", FAILURES.claudePooler);
-    // A background task left running errors after the turn ended; it does not decide.
     t.core.append("thr_noise", "provider/error", FAILURES.unauthorized);
     expect(entry(await t.scan(), "thr_noise")?.state).toBe("resumed");
   });
@@ -563,7 +552,7 @@ describe("dispatch-time enforcement", () => {
     failedThread(t.core, "thr_late");
     const pluginHook = t.core.hook!;
     t.core.hook = async (context) => {
-      await t.host.harness.runCli(["hold", "thr_late"]); // lands between the plugin's re-read and core's dispatch
+      await t.host.harness.runCli(["hold", "thr_late"]);
       return pluginHook(context);
     };
     const report = await t.scan();
@@ -583,17 +572,12 @@ describe("dispatch-time enforcement", () => {
     await t.core
       .retry({ threadId: "thr_mix", sendAt: t.core.now + 5_000, reason: "Manual retry" })
       .catch(() => undefined);
-    // Hold through the plugin removes only its own row.
     await t.host.harness.runCli(["hold", "thr_mix"]);
     expect(t.core.queue.map((row) => row.id)).toEqual(["qmsg_user"]);
   });
 });
 
 describe("Claude turns with background work", () => {
-  // Redacted replica of the live trace (2026-10-24, one client request): request → accepted →
-  // local_bash started → reply → turn/completed(completed) → background task completed →
-  // provider turn/started without a client request → more background work → ten CLI retries
-  // (willRetry, internal/502) → final "Account Pooler could not reach Anthropic" → turn/completed(failed).
   function liveShape(core: FakeCore, id: string) {
     core.addThread({ id, providerId: "claude-code" });
     core.startTurn(id, {
@@ -623,8 +607,6 @@ describe("Claude turns with background work", () => {
     liveShape(t.core, "thr_bg");
     const request = t.core.lastRequest("thr_bg")!.data;
     expect(entry(await t.scan(), "thr_bg")?.state).toBe("resumed");
-    // Core admitted it as a native retry of that request (turn-retry.ts rules): attempt 2,
-    // accepted input → agent-only "Please continue.", same execution.
     const retry = t.core.lastRequest("thr_bg")!.data;
     expect(retry.retryOfRequestId).toBe(request.requestId);
     expect(retry.retryAttempt).toBe(2);
@@ -639,7 +621,7 @@ describe("Claude turns with background work", () => {
     t.core.addThread({ id: "thr_cache", providerId: "claude-code" });
     t.core.startTurn("thr_cache", { input: [], execution: OPUS_ULTRACODE });
     t.core.failTurn("thr_cache", FAILURES.unauthorized);
-    expect(entry(await t.scan(), "thr_cache")?.reason).toBe("not-transport:unauthorized"); // cached
+    expect(entry(await t.scan(), "thr_cache")?.reason).toBe("not-transport:unauthorized");
     t.core.append("thr_cache", "turn/started", {});
     t.core.append("thr_cache", "turn/completed", { status: "completed" });
     t.core.append("thr_cache", "turn/started", {});
@@ -672,7 +654,6 @@ describe("Claude turns with background work", () => {
     });
     t.core.append("thr_own", "turn/completed", { status: "completed" });
     t.core.append("thr_own", "turn/started", {});
-    // The failed provider turn reported no error of its own: it must not inherit the earlier one.
     t.core.append("thr_own", "turn/completed", { status: "failed" });
     t.core.setThread("thr_own", { status: "error" });
     expect(entry(await t.scan(), "thr_own")?.reason).toBe("no-provider-error");

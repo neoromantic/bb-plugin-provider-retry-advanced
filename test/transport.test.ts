@@ -15,9 +15,6 @@ const claudeRetry = (n: number) => ({
 
 describe("classifyFailedTurn", () => {
   it("uses the error that ended the turn, not later errors from work the turn left running", () => {
-    // Shape of an incident thread: in-turn CLI retries, the pooler's final
-    // 502, the failed completion, then a provider-side call after a
-    // background task ended (no new client request) that also errored.
     const events: EventLike[] = [
       claudeRetry(1),
       claudeRetry(2),

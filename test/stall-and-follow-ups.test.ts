@@ -1,10 +1,3 @@
-// The stalled-turn watchdog, the continuation check and the unfinished-request
-// follow-up, against the same fake core as the connectivity tests. The shapes
-// are the ones seen in production (2026-10-27/28): a turn silent for half an
-// hour while the Mac was awake, a resumed manager that answered "Продолжаю…"
-// after a few commands and stopped, and an automation run that failed at 502
-// and was superseded four seconds later by a child-failed notification, so it
-// was never retried.
 import { describe, expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createPlugin } from "../server.js";
@@ -28,7 +21,6 @@ async function setup(options: { armed?: boolean } = {}) {
     monotonic: () => mono,
     wait: async () => {},
   })(host.bb);
-  // All three are off by default; these tests turn them on, as an operator would.
   await host.harness.setSettings({
     stallWatchdog: "20 minutes",
     continuationCheck: true,
@@ -47,7 +39,6 @@ async function setup(options: { armed?: boolean } = {}) {
     core,
     host,
     watchdog,
-    /** Awake time: both clocks move, one check per minute, like the real service. */
     async awake(minutes: number) {
       let report: WatchdogReport | null = null;
       for (let i = 0; i < minutes; i++) {
@@ -57,7 +48,6 @@ async function setup(options: { armed?: boolean } = {}) {
       }
       return report!;
     },
-    /** The Mac sleeps: the wall clock moves, the monotonic clock does not. */
     sleep(minutes: number) {
       core.now += minutes * MINUTE;
       mono += 1_000;
@@ -136,7 +126,6 @@ describe("stalled-turn watchdog", () => {
       "Stalled turn restarted",
     );
 
-    // The restarted turn stalls too: it is left alone, a person decides.
     const again = await t.awake(25);
     expect(entry(again, "thr_quiet")?.reason).toBe("already-restarted-once");
     expect(t.stops()).toHaveLength(1);
@@ -147,7 +136,6 @@ describe("stalled-turn watchdog", () => {
     const t = await setup();
     running(t.core, "thr_night");
     t.sleep(16 * 60);
-    // The first check after the wake notices the sleep and counts from there.
     expect(entry(await t.awake(1), "thr_night")).toBeUndefined();
     expect((await t.awake(19)).entries).toEqual([]);
     expect(entry(await t.awake(1), "thr_night")?.state).toBe("restarted");
@@ -209,7 +197,6 @@ describe("stalled-turn watchdog", () => {
     t.core.stopHangs = true;
     expect(entry(await t.awake(20), "thr_slow")?.reason).toBe("stop-not-settled");
     expect(t.sends()).toEqual([]);
-    // The machine confirms: core settles the stopped turn.
     t.core.append("thr_slow", "turn/completed", { status: "interrupted" });
     t.core.interruptTurn("thr_slow", "manual-stop");
     expect(entry(await t.awake(1), "thr_slow")?.state).toBe("restarted");
@@ -273,7 +260,6 @@ describe("continuation check", () => {
     expect(input[0]!.visibility).toBe("agent-only");
     expect(t.core.lastRequest("thr_promise")!.data.execution).toEqual(OPUS_ULTRACODE);
 
-    // The nudge's own turn promising again gets nothing more.
     await t.idle("thr_promise", "Продолжу с текущего состояния…");
     expect(t.sends()).toHaveLength(1);
     expect((await t.host.harness.runCli(["status", "thr_promise"])).stdout).toContain(
@@ -413,7 +399,7 @@ describe("unfinished request follow-up", () => {
     const input = lastInput(t.core, "thr_mgr");
     expect(input[0]!.text.startsWith(UNFINISHED_TAG)).toBe(true);
     expect(input[0]!.text).toContain("an automation run");
-    expect(input[0]!.text).not.toContain("The request was:"); // accepted: already in the provider session
+    expect(input[0]!.text).not.toContain("The request was:");
     expect(input[0]!.visibility).toBe("agent-only");
     expect(t.core.lastRequest("thr_mgr")!.data.execution).toEqual(CODEX_HIGH);
 
@@ -432,7 +418,6 @@ describe("unfinished request follow-up", () => {
 
   it("does nothing when the failure was retried and finished, or a person wrote after it", async () => {
     const t = await setup();
-    // Retried by connectivity recovery and finished; a notification came after.
     t.core.addThread({ id: "thr_retried", providerId: "codex" });
     t.core.startTurn("thr_retried", {
       input: [{ type: "text", text: "[bb automation due:auto_x]", mentions: [] }],
@@ -449,7 +434,6 @@ describe("unfinished request follow-up", () => {
     });
     await t.idle("thr_retried", "Принял.");
 
-    // Superseded, but then Sergey wrote a new message himself.
     await supersededAutomation(t, "thr_person");
     t.core.reply("thr_person", "Принял уведомление.");
     t.core.startTurn("thr_person", {

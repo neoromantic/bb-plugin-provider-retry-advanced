@@ -206,3 +206,21 @@ pass of bb 0.46.1), so the tests check behavior against core's rules rather
 than against the plugin. It is not core: it has no admission lock, no claimed
 rows and no provider, so it cannot prove concurrency guarantees.
 `test/review-cases.test.ts` keeps the independent review's failing cases.
+`test/setup.ts` stands in for `better-sqlite3`, which the SDK test host
+imports for `bb.storage.database()`: Bun cannot load that native module, and
+this plugin only uses `bb.storage.kv`.
+
+Rules the code relies on:
+
+- The `message.dispatch` hook decides from in-memory copies of the plugin's
+  storage and of the failed chains it has read, so the only I/O it does is
+  the one indexed read for an interrupted-workflow message. Core runs the
+  hook under its admission lock, so the rows it blocks are deleted after it
+  returns.
+- Every new failure on a thread bumps a counter. A read of the failed turn
+  that started before the bump is thrown away, so a slow read never
+  publishes a chain that a newer failure replaced
+  (`test/reviewer-refresh.test.ts`).
+- The plugin's background checks end with
+  `bb.experimental_hooks.recheck`. Tests wait for that call
+  (`nextRecheck` in `test/fake-core.ts`) instead of sleeping.

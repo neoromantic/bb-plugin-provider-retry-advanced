@@ -15,10 +15,8 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
   const sdk = core.sdk();
   const send = sdk.threads.send;
   const list = sdk.threads.events.list;
-  // Test controls, read through closures because the harness wraps the SDK once.
   const hooks = {
     sendFails: null as null | "before" | "after",
-    /** Runs when the plugin reads the thread's latest request: the last read before its send. */
     onLatestRequest: null as null | (() => Promise<void> | void),
   };
   sdk.threads.send = async (args) => {
@@ -70,13 +68,11 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
       core.now += 60_000;
       return JSON.parse(result.stdout) as ScanReport;
     },
-    /** BB restarts: the plugin reloads with its stored state, core settles what the dead daemon left open. */
     restart: async (settle: () => void) => {
       host = await host.harness.lifecycle.reload(factory);
       await wire();
       settle();
     },
-    /** Interrupted-workflow messages that reached the thread (dispatched turns). */
     delivered: (threadId: string) =>
       core.events
         .get(threadId)!
@@ -90,7 +86,6 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
   return t;
 }
 
-/** A Claude thread whose turn started an UltraCode workflow and then ended; the workflow keeps running. */
 function workflowThread(core: FakeCore, id: string, name = "bb-plugins-page-design") {
   core.addThread({ id, providerId: "claude-code" });
   core.startTurn(id, {
@@ -102,14 +97,12 @@ function workflowThread(core: FakeCore, id: string, name = "bb-plugins-page-desi
   return item;
 }
 
-/** A workflow killed by a restart, the plugin having seen it running first. */
 async function killed(t: Awaited<ReturnType<typeof setup>>, id: string, name?: string) {
   workflowThread(t.core, id, name);
   await t.scan();
   t.core.settleBackgroundTasks(id);
 }
 
-/** A Claude thread whose turn started a workflow run through the Workflow tool, then ended. */
 function workflowRun(core: FakeCore, id: string, name: string, runId: string) {
   core.addThread({ id, providerId: "claude-code" });
   core.startTurn(id, {
@@ -120,7 +113,6 @@ function workflowRun(core: FakeCore, id: string, name: string, runId: string) {
   core.completeTurn(id);
 }
 
-/** The message as core would have queued it (behind another plugin's wait, for example). */
 function queueWorkflowMessage(core: FakeCore, threadId: string) {
   const input = [
     {
@@ -154,7 +146,7 @@ describe("Claude Code workflows a BB restart killed", () => {
   it("sends one message to resume the run, with the turn's model, effort, tier and permissions", async () => {
     const t = await setup();
     workflowThread(t.core, "thr_idle");
-    await t.scan(); // sees the workflow running on the idle thread
+    await t.scan();
     await t.restart(() => t.core.settleBackgroundTasks("thr_idle"));
     const report = await t.scan();
     expect(entry(report, "thr_idle")).toMatchObject({
@@ -204,7 +196,7 @@ describe("Claude Code workflows a BB restart killed", () => {
     const t = await setup();
     workflowThread(t.core, "thr_running");
     await t.scan();
-    await t.restart(() => {}); // plugin reload only: the daemon and the workflow live on
+    await t.restart(() => {});
     for (let i = 0; i < 3; i++) await t.scan();
     expect(t.sends).toHaveLength(0);
   });
@@ -227,7 +219,6 @@ describe("Claude Code workflows a BB restart killed", () => {
     const t = await setup();
     workflowThread(t.core, "thr_stop");
     await t.scan();
-    // A stop the machine could not confirm: core interrupts and settles itself.
     t.core.append("thr_stop", "system/thread/interrupted", { reason: "manual-stop" });
     t.core.settleBackgroundTasks("thr_stop");
     expect(entry(await t.scan(), "thr_stop")?.reason).toBe("workflow:stopped-by-user");
@@ -250,7 +241,7 @@ describe("Claude Code workflows a BB restart killed", () => {
     });
     t.core.completeTurn("thr_user");
     const report = await t.scan();
-    expect(entry(report, "thr_held")).toBeUndefined(); // the hold dropped the marker
+    expect(entry(report, "thr_held")).toBeUndefined();
     expect(entry(report, "thr_user")?.reason).toBe("workflow:a-newer-message-took-over");
     expect((await t.run(["release", "thr_held"])).exitCode).toBe(0);
     await t.scan();
@@ -284,17 +275,16 @@ describe("Claude Code workflows a BB restart killed", () => {
     });
     t.core.startBackgroundTask(id, "local_workflow", "page-review");
     await t.scan();
-    // The machine is gone: core interrupts the running turn and settles the workflow.
     await t.core.setHostOnline("host_remote", false);
     t.core.interruptTurn(id, "host-daemon-restarted", "host-connection-lost");
     t.core.settleBackgroundTasks(id);
     let report = await t.scan();
-    expect(t.core.queue).toHaveLength(1); // core's retry waits for the machine
+    expect(t.core.queue).toHaveLength(1);
     expect(report.entries.filter((e) => e.threadId === id).map((e) => e.reason)).toContain(
       "workflow:thread-error",
     );
     await t.scan();
-    expect(t.core.queue).toHaveLength(1); // no second retry while one is queued
+    expect(t.core.queue).toHaveLength(1);
     await t.core.setHostOnline("host_remote", true);
     expect(JSON.stringify(t.core.lastRequest(id)!.data.input)).toContain(
       CONTINUE_ACCEPTED_TURN_TEXT,
@@ -320,7 +310,7 @@ describe("Claude Code workflows a BB restart killed", () => {
     await t.scan();
     t.core.interruptTurn(id, "host-daemon-restarted");
     t.core.settleBackgroundTasks(id);
-    await t.scan(); // core retry: "Please continue."
+    await t.scan();
     const resumed = t.core.startWorkflowRun(
       id,
       "page-review",
@@ -366,8 +356,8 @@ describe("review cases: interrupted-workflow message and the dispatch gate", () 
       resumed = t.core.startWorkflowRun("thr_r2", "original", "wf_orig0002-002", "wf_orig0002-002");
       t.core.completeTurn("thr_r2");
     };
-    expect(entry(await t.scan(), "thr_r2")?.reason).toBe("workflow:send-failed"); // the hook saw the thread move on
-    expect(entry(await t.scan(), "thr_r2")).toBeUndefined(); // workflow open again: wait
+    expect(entry(await t.scan(), "thr_r2")?.reason).toBe("workflow:send-failed");
+    expect(entry(await t.scan(), "thr_r2")).toBeUndefined();
     t.core.closeBackgroundTask("thr_r2", resumed, "completed");
     expect(entry(await t.scan(), "thr_r2")?.reason).toBe("workflow:workflow-finished-or-resumed");
     expect(t.delivered("thr_r2")).toHaveLength(0);
@@ -405,7 +395,7 @@ describe("review cases: interrupted-workflow message and the dispatch gate", () 
     queueWorkflowMessage(t.core, "thr_q2");
     const checked = t.rechecked();
     await t.core.drain();
-    expect(t.delivered("thr_q2")).toHaveLength(0); // waits for the re-check
+    expect(t.delivered("thr_q2")).toHaveLength(0);
     await checked;
     t.core.now = t.core.queue[0]!.sendAt! + 1;
     await t.core.drain();
@@ -479,10 +469,10 @@ describe("review cases: failed sends, several workflows, cancel", () => {
     await t.scan();
     t.core.interruptTurn(id, "host-daemon-restarted");
     t.core.settleBackgroundTasks(id);
-    await t.scan(); // core retry first
-    const b = t.core.startWorkflowRun(id, "B", "wf_bbbb0000-00b", "wf_bbbb0000-00b"); // the agent resumes only B
+    await t.scan();
+    const b = t.core.startWorkflowRun(id, "B", "wf_bbbb0000-00b", "wf_bbbb0000-00b");
     t.core.completeTurn(id);
-    expect(entry(await t.scan(), id)).toBeUndefined(); // B still running: wait
+    expect(entry(await t.scan(), id)).toBeUndefined();
     t.core.closeBackgroundTask(id, b, "completed");
     await t.scan();
     expect(t.delivered(id)).toHaveLength(1);
@@ -493,13 +483,13 @@ describe("review cases: failed sends, several workflows, cancel", () => {
 
   it("an independent same-name workflow does not count as resuming a run whose id is unknown", async () => {
     const t = await setup();
-    await killed(t, "thr_same", "review"); // no Workflow call result: run id unknown
+    await killed(t, "thr_same", "review");
     t.core.startTurn("thr_same", {
       input: [{ type: "text", text: "Callback", mentions: [] }],
       execution: OPUS_ULTRACODE,
       initiator: "system",
     });
-    const other = t.core.startWorkflowRun("thr_same", "review", "wf_new00000-001"); // a new run, not a resume
+    const other = t.core.startWorkflowRun("thr_same", "review", "wf_new00000-001");
     t.core.completeTurn("thr_same");
     await t.scan();
     t.core.closeBackgroundTask("thr_same", other, "completed");
@@ -513,7 +503,6 @@ describe("review cases: failed sends, several workflows, cancel", () => {
   it("does not send, and keeps the marker, when the workflow's request chain cannot be read", async () => {
     const t = await setup();
     await killed(t, "thr_pruned");
-    // History before the close is gone: the workflow's start (and its request) cannot be found.
     const events = t.core.events.get("thr_pruned")!;
     t.core.events.set(
       "thr_pruned",
@@ -540,7 +529,6 @@ describe("review cases: failed sends, several workflows, cancel", () => {
     t.core.completeTurn(id);
     await t.scan();
     t.core.settleBackgroundTasks(id);
-    // A system turn resumes only the second run by id, and it finishes.
     t.core.startTurn(id, {
       input: [{ type: "text", text: "Callback", mentions: [] }],
       execution: OPUS_ULTRACODE,
@@ -569,12 +557,12 @@ describe("review cases: failed sends, several workflows, cancel", () => {
     t.core.completeTurn(id);
     await t.scan();
     t.core.settleBackgroundTasks(id);
-    await t.scan(); // first message
+    await t.scan();
     expect(t.delivered(id)).toHaveLength(1);
-    t.core.startWorkflowRun(id, "review", "wf_cccc3333-003", "wf_cccc3333-003"); // the agent resumes it
+    t.core.startWorkflowRun(id, "review", "wf_cccc3333-003", "wf_cccc3333-003");
     t.core.completeTurn(id);
     await t.scan();
-    t.core.settleBackgroundTasks(id); // a second restart kills the resumed run
+    t.core.settleBackgroundTasks(id);
     await t.scan();
     expect(t.delivered(id)).toHaveLength(2);
     expect(JSON.stringify(t.delivered(id)[1]!.data.input)).toContain("wf_cccc3333-003");
@@ -601,14 +589,13 @@ describe("review cases: failed sends, several workflows, cancel", () => {
       input: [{ type: "text", text: "Go on", mentions: [] }],
       execution: OPUS_ULTRACODE,
     });
-    t.core.startBackgroundTask(id, "local_workflow", "page-review"); // started by the turn that is cancelled
+    t.core.startBackgroundTask(id, "local_workflow", "page-review");
     await t.scan();
     t.core.interruptTurn(id, "host-daemon-restarted");
     t.core.settleBackgroundTasks(id);
     expect((await t.run(["cancel", id])).exitCode).toBe(0);
     expect(entry(await t.scan(), id)?.reason).toBe("workflow:cancelled");
-    expect(t.core.thread(id).status).toBe("error"); // no transport retry after cancel
-    // A system notification runs a turn and leaves the thread idle.
+    expect(t.core.thread(id).status).toBe("error");
     t.core.startTurn(id, {
       input: [{ type: "text", text: "Child finished", mentions: [] }],
       execution: OPUS_ULTRACODE,
@@ -617,7 +604,6 @@ describe("review cases: failed sends, several workflows, cancel", () => {
     t.core.completeTurn(id);
     await t.scan();
     expect(t.delivered(id)).toHaveLength(0);
-    // Later the user starts new work; its workflow is killed by another restart.
     t.core.startTurn(id, {
       input: [{ type: "text", text: "New task", mentions: [] }],
       execution: OPUS_ULTRACODE,

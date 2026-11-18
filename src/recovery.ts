@@ -26,21 +26,14 @@ export const SCAN_INTERVAL_MS = 60_000;
 /** Shown verbatim on the queued retry card; also marks this plugin's own rows. */
 export const TRANSPORT_RETRY_REASON = "Connectivity restored";
 
-/** Reasons of every retry row this plugin creates (the stock policy's two, plus its own). */
 const OWN_RETRY_REASONS = new Set([TRANSPORT_RETRY_REASON, "Rate limited", "Provider overloaded"]);
 
-/**
- * Set by `arm`. A fresh install observes only until then, so holds can be
- * placed before anything is retried; reloads and restarts keep it.
- */
 const ARMED_KEY = "armed";
 
-/** BB Workflows owns its hidden workers' retries, replay and cleanup. */
 const WORKFLOW_ENGINE_PLUGIN_ID = "workflows";
 
 const LIST_PAGE_SIZE = 200;
 
-/** How long a drain waits while this plugin has not yet read state after loading. */
 const NOT_READY_WAIT_MS = 10_000;
 
 export type ScanEntryState = "resumed" | "waiting" | "skipped";
@@ -67,14 +60,12 @@ export interface ScanReport {
 
 interface FailedTurn {
   requestSeq: number;
-  /** The latest completion/interruption after the request when this was read. */
   terminalSeq: number | null;
   requestId: string;
   originalRequestId: string;
   failure: FailureClass;
 }
 
-/** `threads.get` fields this plugin reads. */
 interface ThreadState {
   id: string;
   status: string;
@@ -83,7 +74,6 @@ interface ThreadState {
   deletedAt: number | null;
 }
 
-/** `threads.list` rows additionally carry pending-interaction and background state. */
 interface ThreadRow extends ThreadState {
   hasPendingInteraction: boolean;
   originPluginId: string | null;
@@ -100,55 +90,40 @@ type DispatchDecision =
   | { action: "wait"; reason: string; sendAt?: number | null }
   | { action: "reject"; message: string };
 
-/** The fields of a Claude Code background task, or of a tool call, this plugin reads. */
 interface TaskItem {
   id: string;
   type: string;
   taskType?: string;
   taskStatus?: string;
   workflowName?: string;
-  /** Claude Code's task id. */
   familyId?: string;
-  /** The tool call that started the task (the Workflow call for a workflow). */
   parentToolCallId?: string;
-  /** Set by the provider's own close; absent when core closed a task it found open. */
   presentation?: unknown;
   tool?: string;
   arguments?: { resumeFromRunId?: string };
   result?: unknown;
 }
 
-/** Where a killed workflow came from, read once from its start and kept with the marker. */
 interface WorkflowOrigin {
-  /** Claude Code's run id from the result of the Workflow call that started it; null when not found. */
   runId: string | null;
-  /** The request chain that started it; a cancel of this chain drops it. Null when not found. */
   chain: string | null;
 }
 
-/** A thread a scan saw with an open Claude Code workflow (kept in KV across restarts). */
 interface WorkflowRecord {
-  /** When the scan that first saw the open workflow started; its close cannot be earlier. */
   sinceAt: number;
-  /** Origins of the killed workflows, by task item id. */
   origins: Record<string, WorkflowOrigin>;
-  /** The killed workflows the last check asked about; their chains are the ones a cancel withdraws. */
   asked: string[];
 }
 
-/** A workflow core closed as stopped after a restart, with its origin. */
 interface KilledWorkflow extends WorkflowOrigin {
   seq: number;
   id: string;
-  /** Claude Code's task id (the item's familyId). */
   task: string;
   name: string;
 }
 
-/** "Run ID: wf_…" in the result of Claude Code's Workflow tool call. */
 const RUN_ID = /Run ID: (wf_[A-Za-z0-9-]+)/;
 
-/** This plugin's own interrupted-workflow message, queued or about to be dispatched. */
 function isWorkflowRow(row: QueueRow) {
   return row.content.some((block) => block.type === "text" && block.text.startsWith(WORKFLOW_TAG));
 }
@@ -222,24 +197,15 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
   const now = options.now ?? Date.now;
   const failedTurns = new Map<string, FailedTurn>();
   const recorded = new Map<string, string>();
-  // Mirrors of the KV state, so the dispatch hook decides without I/O.
   const held = new Set<string>();
   const skipped = new Map<string, string>();
   let armed = false;
-  // Runtime facts the hook needs: each failed thread's current failed chain
-  // (read from its events; unknown until read), and the retries this plugin
-  // is submitting inline right now.
   const currentChain = new Map<string, string>();
-  // Bumped by every new failure of a thread. A read that started under an older
-  // generation never publishes: a newer failure may have moved the chain.
   const generation = new Map<string, number>();
   const refreshing = new Set<string>();
   const inflight = new Map<string, string>();
   const selfDeleting = new Set<string>();
-  // Threads a scan saw with an open Claude Code workflow; kept across restarts.
   const workflowsSeen = new Map<string, WorkflowRecord>();
-  // A thread's workflow message checked at this event sequence: the hook lets it through
-  // once, and only if nothing happened on the thread after that sequence.
   const workflowReady = new Map<string, number>();
   let running: Promise<ScanReport> | null = null;
   let last: ScanReport | null = null;
@@ -264,20 +230,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     await bb.storage.kv.delete(`workflow:${threadId}`);
   }
 
-  /**
-   * Workflows a restart killed and nothing resumed since, oldest first. A BB
-   * restart (or the thread's machine restarting or dropping off) kills the
-   * Claude Code process, and with it workflows still running in the
-   * background, even when the turn that started them had ended and the
-   * thread is idle: there is no failed turn for core to retry. Core then
-   * closes each task as `stopped` with the item it last stored; Claude Code's
-   * own close of a workflow it finished or stopped (TaskStop, a manual stop)
-   * carries a presentation.
-   *
-   * A killed run counts as resumed only by a later Workflow call with its
-   * `resumeFromRunId`. A run whose id is unknown stays a candidate: names
-   * prove nothing, so the message asks to check that task's run first.
-   */
   async function killedWorkflows(threadId: string, record: WorkflowRecord) {
     const killed: KilledWorkflow[] = [];
     for (let before: number | undefined; ;) {
@@ -298,8 +250,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
         )
           continue;
         if (record.origins[item.id] === undefined) {
-          // Where it came from, read once: its start, the Workflow call's result (which names the
-          // run), and the request before its start (the chain it belongs to).
           const origin: WorkflowOrigin = { runId: null, chain: null };
           for (let startBefore = event.seq; ;) {
             const starts = await listEvents(bb, {
@@ -357,7 +307,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       before = page.at(-1)!.seq;
     }
     if (killed.length === 0) return killed;
-    // Workflow calls after the first kill that resume a run by id.
     const resumes: Array<{ seq: number; runId: string }> = [];
     for (let afterSeq = killed[0]!.seq; ;) {
       const page = await listEvents(bb, {
@@ -380,10 +329,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     );
   }
 
-  /**
-   * Why the dispatch hook must not let this thread's workflow message through,
-   * or null. Reads memory only: the scan and `refreshWorkflow` keep it current.
-   */
   function workflowBlocked(threadId: string) {
     if (!options.workflowRecovery()) return "setting-off";
     if (!armed) return "not-armed";
@@ -400,12 +345,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     return null;
   }
 
-  /**
-   * Decides about a thread whose open workflows all closed: `ready` (with
-   * what to send and the event sequence the checks saw), `waiting` (check
-   * again later) or `skipped` (drop it). The hook admits the message only if
-   * the thread has no event after that sequence.
-   */
   async function checkWorkflow(
     thread: Pick<ThreadRow, "id" | "status" | "originPluginId">,
     record: WorkflowRecord,
@@ -415,7 +354,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     const killed = all.filter((run) => run.chain === null || skipped.get(thread.id) !== run.chain);
     if (all.length === 0) return { state: "skipped", reason: "workflow-finished-or-resumed" };
     if (killed.length === 0) return { state: "skipped", reason: "cancelled" };
-    // Without the chain a cancel cannot be honoured: never send, keep the marker and say why.
     if (killed.some((run) => run.chain === null))
       return { state: "waiting", reason: "workflow-origin-unknown" };
     if (held.has(thread.id)) return { state: "skipped", reason: "held" };
@@ -449,7 +387,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     ) {
       return { state: "skipped", reason: "a-newer-message-took-over" };
     }
-    // A failed turn is retried first (doScan); a busy or waiting thread is checked again later.
     if (thread.status !== "idle") return { state: "waiting", reason: `thread-${thread.status}` };
     if (await hasPendingInteraction(bb, thread.id))
       return { state: "waiting", reason: "pending-interaction" };
@@ -473,7 +410,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     return { state: "ready", reason: "interrupted-workflow", labels, seq: latest!.seq };
   }
 
-  /** Before a queued workflow message drains: check again, then let it through or withdraw it. */
   function refreshWorkflow(threadId: string) {
     const record = workflowsSeen.get(threadId);
     if (record === undefined || refreshing.has(`workflow:${threadId}`)) return;
@@ -481,7 +417,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     void (async () => {
       try {
         const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadRow;
-        // The queued message itself is the one row: judge the thread as if it were not queued.
         const decision = await checkWorkflow({ ...thread, status: "idle" }, record);
         if (decision.reason === "message-queued") workflowReady.set(threadId, decision.seq!);
         await bb.storage.kv.set(`workflow:${threadId}`, record);
@@ -507,7 +442,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
         workflowsSeen.has(thread.id)
       )
         continue;
-      // The scan's start bounds the close: a workflow closed after this list read is still found.
       const record: WorkflowRecord = { sinceAt: report.at, origins: {}, asked: [] };
       workflowsSeen.set(thread.id, record);
       await bb.storage.kv.set(`workflow:${thread.id}`, record);
@@ -547,8 +481,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
           continue;
         }
         const request = await latestRequest(bb, threadId);
-        // The hook lets this send through once, if nothing happened after the checks;
-        // the marker stays until a scan sees the message dispatched.
         workflowReady.set(threadId, decision.seq!);
         await sendAgentOnly(bb, {
           threadId,
@@ -592,27 +524,16 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     for (let attempt = 0; attempt < 3; attempt++) {
       const started = generation.get(thread.id) ?? 0;
       const read = await readFailedTurn(thread);
-      if ((generation.get(thread.id) ?? 0) !== started) continue; // a newer failure landed mid-read
+      if ((generation.get(thread.id) ?? 0) !== started) continue;
       if (read === null) return null;
       currentChain.set(thread.id, read.originalRequestId);
       if (read.failure.kind !== "other" || read.failure.reason !== "incomplete")
         failedTurns.set(thread.id, read);
       return read;
     }
-    return null; // still changing: stay unknown, the next read or scan decides
+    return null;
   }
 
-  /**
-   * The thread's most recent request (the only one core will retry) and the
-   * failure that put the thread in `error`. One request can span several
-   * provider turns: Claude Code continues on its own when a background task
-   * reports, without a new client request. So the terminal event is the
-   * LATEST `turn/completed` or `system/thread/interrupted` after the request;
-   * if that latest turn did not fail, there is no failure to recover. The
-   * decisive error is the last `provider/error` inside that failed provider
-   * turn (after the previous completion). Cached per request AND terminal
-   * event, so a later provider turn under the same request is read afresh.
-   */
   async function readFailedTurn(thread: ThreadState) {
     const [request] = await bb.sdk.threads.events.list({
       threadId: thread.id,
@@ -684,7 +605,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     } satisfies FailedTurn;
   }
 
-  /** Writes the explain diagnostic only when this thread's decision changed. */
   async function record(entry: ScanEntry, at: number) {
     if (entry.requestId === null) return;
     const key = `${entry.requestId}:${entry.state}:${entry.reason}`;
@@ -702,12 +622,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     await bb.storage.kv.set(`decision:${entry.threadId}`, diagnostic);
   }
 
-  /**
-   * Why an automatic retry of `chain` on this thread must not run now, or
-   * null. A retry belongs to the failed turn chain it was queued for; when the
-   * thread's current failed chain is another one, a later turn superseded it.
-   * `unknown` means the current chain has not been read yet: wait, never run.
-   */
   function ineligible(args: { threadId: string; status: string; chain: string }) {
     if (held.has(args.threadId)) return "held";
     if (skipped.get(args.threadId) === args.chain) return "cancelled";
@@ -718,7 +632,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     return null;
   }
 
-  /** Reads the thread's current failed chain, then asks core to re-run the hook. */
   function refresh(threadId: string) {
     if (refreshing.has(threadId)) return;
     refreshing.add(threadId);
@@ -733,7 +646,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
         bb.log.warn(`Could not read the failed turn of ${threadId}: ${String(error)}`);
       } finally {
         refreshing.delete(threadId);
-        // A failure that arrived while this read ran skipped its own refresh.
         if ((generation.get(threadId) ?? 0) !== started && !currentChain.has(threadId))
           refresh(threadId);
       }
@@ -760,7 +672,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     return removed;
   }
 
-  /** This plugin's queued retries (of `chain` only, when given) and its interrupted-workflow message. */
   async function withdrawThreadRows(threadId: string, why: string, chain?: string) {
     const record = workflowsSeen.get(threadId);
     const rows = (await bb.sdk.threads.queue.list({ threadId })).filter(
@@ -776,13 +687,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     if (rows.length > 0) await deleteOwnRows(rows, why);
   }
 
-  /**
-   * Withdraws this plugin's own retry rows that must no longer run: the
-   * thread is held, the failure was cancelled, the thread is no longer failed
-   * (stopped, answered, recovered), or it failed again on a different turn.
-   * The dispatch hook already blocks such rows at drain time; this removes
-   * them from the queue card. Rows from other plugins or users are never touched.
-   */
   async function removeStaleOwnRows(rows: QueueRow[]) {
     let removed = 0;
     for (const row of rows) {
@@ -790,7 +694,7 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       const thread = (await bb.sdk.threads.get({
         threadId: row.threadId,
       })) as unknown as ThreadState;
-      if (thread.archivedAt !== null || thread.deletedAt !== null) continue; // core drops these rows
+      if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
       if (thread.status === "error") await loadFailedTurn(thread);
       const why = ineligible({
         threadId: row.threadId,
@@ -816,7 +720,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     if (!report.enabled && !options.workflowRecovery()) return report;
 
     const queuedBefore = await bb.sdk.threads.queue.list({});
-    // Before arm, rows are kept as they are (the hook holds them); after, stale ones go.
     if (armed) report.staleRowsRemoved = await removeStaleOwnRows(queuedBefore);
     const queued =
       report.staleRowsRemoved === 0 ? queuedBefore : await bb.sdk.threads.queue.list({});
@@ -869,8 +772,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       candidates.push({ thread, failed, entry });
     }
 
-    // Until armed after a fresh install, report what would be resumed and stop:
-    // no probe, no retry. This lets the operator hold threads first.
     if (!armed) {
       for (const { entry } of candidates) {
         entry.state = "waiting";
@@ -879,7 +780,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       return report;
     }
 
-    // Probe only the provider paths a waiting turn needs, once per scan.
     const targets = new Set<ProbeTargetId>();
     for (const { failed } of candidates) {
       if (failed.failure.kind === "transport" && failed.failure.route.kind === "provider") {
@@ -904,13 +804,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     return report;
   }
 
-  /**
-   * Re-reads the thread, then asks core to retry. The re-read and the call
-   * are separate operations; what keeps a late change from running the turn
-   * is the dispatch hook, which core consults under its admission lock before
-   * the attempt reaches the provider (see decideDispatch). Inside the retry
-   * core also enforces archive/delete/stopping, the failed turn and dedupe.
-   */
   async function resume(threadId: string, failed: FailedTurn) {
     const current = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
     if (current.archivedAt !== null || current.deletedAt !== null) return "state-changed:archived";
@@ -1005,7 +898,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       return failed.originalRequestId;
     },
     noteFailure(threadId) {
-      // A new failure moves the thread's failed chain; it is unknown until read.
       generation.set(threadId, (generation.get(threadId) ?? 0) + 1);
       failedTurns.delete(threadId);
       currentChain.delete(threadId);
@@ -1013,7 +905,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     },
     async onRetryRowCancelled(entry) {
       if (selfDeleting.has(entry.id)) return;
-      // Deleting the queued interrupted-workflow message is a decision about those workflows.
       if (isWorkflowRow(entry as QueueRow)) return forgetWorkflow(entry.threadId);
       if (entry.payload.kind !== "retry" || entry.payload.retryOfTurnRequestId === undefined)
         return;
@@ -1021,7 +912,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
     },
     decideDispatch(context) {
       const threadId = context.thread.id;
-      // This plugin's interrupted-workflow message: inline right after its checks, or queued.
       const workflowRows = context.queuedMessages.filter(isWorkflowRow);
       if (
         workflowRows.length > 0 ||
@@ -1031,7 +921,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
         const checkedAt = workflowReady.get(threadId);
         workflowReady.delete(threadId);
         if (workflowRows.length === 0) {
-          // Inline: only the send a scan has just checked, to a thread that is still idle.
           if (blocked !== null)
             return {
               action: "reject",
@@ -1047,8 +936,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
               action: "reject",
               message: "Interrupted-workflow message withdrawn: not-checked.",
             };
-          // One indexed read (core allows async decisions within its box): anything on the thread
-          // after the checks (a turn, a request, a stop, a workflow starting) refuses the send.
           return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(
             ([next]) =>
               next === undefined
@@ -1060,6 +947,7 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
           );
         }
         if (blocked !== null) {
+          // WARNING: delete these rows after the hook returns, outside core's admission lock.
           setTimeout(() => {
             void deleteOwnRows(workflowRows, blocked).then(() =>
               bb.experimental_hooks.recheck("message.dispatch"),
@@ -1067,7 +955,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
           }, 0);
           return { action: "wait", reason: `Interrupted-workflow message withdrawn: ${blocked}` };
         }
-        // Queued: admitted only on checks run against the current state; otherwise check again.
         if (checkedAt === undefined) {
           refreshWorkflow(threadId);
           return {
@@ -1090,7 +977,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       }
       const own = context.queuedMessages.filter(isOwnRetryRow);
       if (own.length === 0) {
-        // Inline: only this plugin's own retry call, identified while it runs.
         const chain = inflight.get(threadId);
         if (chain === undefined || context.queuedMessages.length > 0) return { action: "proceed" };
         const why = ineligible({ threadId, status: context.thread.status, chain });
@@ -1098,8 +984,6 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
           ? { action: "proceed" }
           : { action: "reject", message: `Automatic retry withdrawn: ${why}.` };
       }
-      // Before arm, automatic retries this plugin would own (including rows left
-      // by the bundled plugin) wait untouched; `arm` asks core to re-run this.
       if (!armed) return { action: "wait", reason: "Waiting for bb provider-retry-advanced arm" };
       const verdicts = own.map((row) => ({
         row,
@@ -1120,8 +1004,7 @@ export function createTransportRecovery(bb: BbPluginApi, options: TransportRecov
       const blocked = verdicts.filter((v) => v.why !== null).map((v) => v.row);
       if (blocked.length === 0) return { action: "proceed" };
       const why = verdicts.find((v) => v.why !== null)!.why;
-      // Hold the attempt, then take the rows off the queue outside the hook's
-      // lock; anything else grouped with them is re-attempted afterwards.
+      // WARNING: delete these rows after the hook returns, outside core's admission lock.
       setTimeout(() => {
         void deleteOwnRows(blocked, why ?? "withdrawn").then(() =>
           bb.experimental_hooks.recheck("message.dispatch"),

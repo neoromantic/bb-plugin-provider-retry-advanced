@@ -1,9 +1,3 @@
-// Ported from get-bb/bb plugins/provider-retry/server.test.ts (MIT, desktop-v0.46.1)
-// to bun:test. Fork deltas are limited to: plugin id, the extra
-// transportRecovery setting, the extra CLI commands, the CLI name, the
-// `connectivity` field in `status --json`, cancel's not-found message, the
-// registered message.dispatch hook, and every host being armed before load
-// (a fresh, unarmed install retries nothing; see test/recovery.test.ts).
 import { retryAvailabilityMethod, type RetryAvailability } from "../src/retry-contract.js";
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import {
@@ -154,7 +148,6 @@ function createHost(
   };
 }
 
-/** Fork: mark the install as armed, as after `bb provider-retry-advanced arm`. */
 async function armedBefore(host: {
   bb: { storage: { kv: { set(key: string, value: unknown): Promise<void> } } };
 }) {
@@ -393,7 +386,6 @@ describe("provider retry plugin", () => {
           "Every 60 seconds, resume turns that failed because the provider or machine was unreachable, once it answers again. No attempt limit.",
         default: true,
       },
-      // Fork: workflow recovery, the stalled-turn watchdog and the two follow-ups, each off by default.
       workflowRecovery: {
         type: "boolean",
         label: "Resume workflows a restart killed",
@@ -426,7 +418,6 @@ describe("provider retry plugin", () => {
     });
     expect(host.harness.registrations.threadEventHandlers["turn.failed"]).toBe(1);
     expect(host.harness.registrations.threadEventHandlers["thread.idle"]).toBe(1);
-    // Fork: the dispatch hook enforces holds/cancels/supersession on this plugin's own retries.
     expect(typeof host.harness.registrations.hooks["message.dispatch"]).toBe("function");
     expect(host.harness.registrations.cli?.commands.map((command) => command.name)).toEqual([
       "status",
