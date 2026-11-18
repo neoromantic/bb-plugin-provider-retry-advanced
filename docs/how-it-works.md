@@ -192,7 +192,7 @@ died (no evidence that it is dead, so nothing is sent).
 
 ```sh
 bun install --frozen-lockfile
-bun run check   # TypeScript 7, as upstream
+bun run check   # TypeScript 7, as upstream, then Knip
 bun test        # bun:test, includes the upstream tests ported from vitest
 bun run bundle   # official bb-app 0.48.0; build SDK 0.6.94
 ```
