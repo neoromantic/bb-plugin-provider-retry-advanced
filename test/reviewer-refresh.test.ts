@@ -2,7 +2,7 @@
 import { expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createTransportRecovery } from "../src/recovery.js";
-import { CODEX_HIGH, FAILURES, FakeCore } from "./fake-core.js";
+import { CODEX_HIGH, FAILURES, FakeCore, nextRecheck } from "./fake-core.js";
 
 it("a newer failure invalidates an older chain refresh already in flight", async () => {
   const core = new FakeCore();
@@ -61,8 +61,9 @@ it("a newer failure invalidates an older chain refresh already in flight", async
   core.startTurn("review-refresh", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-refresh", FAILURES.unauthorized);
   recovery.noteFailure("review-refresh"); // exactly server.ts's event wiring
+  const refreshed = nextRecheck(host.bb);
   release();
-  await Bun.sleep(5);
+  await refreshed;
   core.now += 1001;
   await core.drain();
   expect(core.thread("review-refresh").status).toBe("error");

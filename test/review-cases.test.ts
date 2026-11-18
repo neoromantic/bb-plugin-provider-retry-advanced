@@ -6,7 +6,7 @@
 import { expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createPlugin } from "../server.js";
-import { CODEX_HIGH, FAILURES, FakeCore } from "./fake-core.js";
+import { CODEX_HIGH, FAILURES, FakeCore, nextRecheck } from "./fake-core.js";
 
 function wire(core: FakeCore, host: ReturnType<typeof createFakePluginHost>) {
   core.hook = (context) => host.harness.registrations.hooks["message.dispatch"]!(context as never);
@@ -46,6 +46,7 @@ it("removes an old retry when a different turn has already failed", async () => 
   const { core, host } = await queuedFailure();
   core.startTurn("review-thread", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-thread", FAILURES.unauthorized);
+  const refreshed = nextRecheck(host.bb);
   await host.harness.behavior.emitThreadEvent("turn.failed", {
     threadId: "review-thread",
     requestId: core.lastRequest("review-thread")!.data.requestId as string,
@@ -59,7 +60,7 @@ it("removes an old retry when a different turn has already failed", async () => 
   core.now += 1;
   await core.setHostOnline("review-host", true);
   expect(core.thread("review-thread").status).toBe("error");
-  await Bun.sleep(5);
+  await refreshed;
   await host.harness.runCli(["scan"]);
   expect(core.queue).toHaveLength(0);
 });
@@ -85,11 +86,12 @@ it("classifies the final error even after 500 earlier provider errors", async ()
 });
 
 it("does not wake a stopped thread when host reconnects before the next scan", async () => {
-  const { core } = await queuedFailure();
+  const { core, host } = await queuedFailure();
   core.setThread("review-thread", { status: "idle" });
+  const withdrawn = nextRecheck(host.bb);
   await core.setHostOnline("review-host", true);
   expect(core.thread("review-thread").status).toBe("idle");
-  await Bun.sleep(5);
+  await withdrawn;
   expect(core.queue).toHaveLength(0); // and the withdrawn row is taken off the queue
 });
 

@@ -17,6 +17,7 @@
  * that need a claimed row set its state by hand) and no provider: "same provider session" here only means core re-used the thread's
  * session id, which the real core does through its normal send path.
  */
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
 /** A `threads.list` row: the `threads.get` DTO plus list-only fields. */
@@ -91,6 +92,7 @@ export class FakeCore {
   onRowCancelled: ((row: FakeQueueRow) => Promise<unknown> | unknown) | null = null;
   private seq = 0;
   private ids = 0;
+  private turnWaiters = new Map<string, Array<() => void>>();
   now = Date.parse("2026-10-24T05:30:00.000Z");
 
   addThread(overrides: Partial<Thread> & { id: string; providerId: string }): Thread {
@@ -168,7 +170,16 @@ export class FakeCore {
       });
     }
     this.setThread(threadId, { status: "active" });
+    for (const resolve of this.turnWaiters.get(threadId) ?? []) resolve();
+    this.turnWaiters.delete(threadId);
     return requestId;
+  }
+
+  /** Resolves when the next turn starts on the thread (a send, a retry or a drained row). */
+  nextTurn(threadId: string) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.turnWaiters.set(threadId, [...(this.turnWaiters.get(threadId) ?? []), resolve]);
+    return promise;
   }
 
   lastRequest(threadId: string): FakeEvent | null {
@@ -717,6 +728,23 @@ export class FakeCore {
       plugins: { experimental_discoverRpc: async () => [] },
     };
   }
+}
+
+/**
+ * Resolves at the plugin's next `bb.experimental_hooks.recheck`, which the call still reaches. The
+ * plugin asks core for one when a check it started in the background has finished.
+ */
+export function nextRecheck(bb: BbPluginApi) {
+  const hooks = bb.experimental_hooks;
+  const recheck = hooks.recheck;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  hooks.recheck = function (...args) {
+    resolve();
+    return Reflect.apply(recheck, this, args);
+  };
+  return promise.finally(() => {
+    hooks.recheck = recheck;
+  });
 }
 
 export const OPUS_ULTRACODE: Execution = {

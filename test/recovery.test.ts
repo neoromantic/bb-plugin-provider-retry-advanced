@@ -149,8 +149,9 @@ describe("connectivity recovery", () => {
     const host = createFakePluginHost({ pluginId: PLUGIN_ID, sdk: core.sdk() as never });
     await host.bb.storage.kv.set("armed", { at: 0 }); // armed on an earlier load
     await createPlugin({ probe: async () => ({ reachable: true, detail: "HTTP 405" }) })(host.bb);
+    const resumed = core.nextTurn("thr_old");
     const { controller, done } = host.harness.behavior.runService("connectivity-recovery");
-    for (let i = 0; i < 50 && core.thread("thr_old").status !== "active"; i++) await Bun.sleep(5);
+    await resumed;
     controller.abort();
     await done;
     expect(core.thread("thr_old").status).toBe("active");

@@ -3,7 +3,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createPlugin } from "../server.js";
 import { WORKFLOW_TAG, workflowText } from "../src/continuations.js";
 import type { ScanReport } from "../src/recovery.js";
-import { CONTINUE_ACCEPTED_TURN_TEXT, FakeCore, OPUS_ULTRACODE } from "./fake-core.js";
+import { CONTINUE_ACCEPTED_TURN_TEXT, FakeCore, OPUS_ULTRACODE, nextRecheck } from "./fake-core.js";
 
 const PLUGIN_ID = "provider-retry-advanced";
 
@@ -62,6 +62,7 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
     sends,
     hooks,
     run: (args: string[]) => host.harness.runCli(args),
+    rechecked: () => nextRecheck(host.bb),
     hook: () => host.harness.registrations.hooks["message.dispatch"]!,
     scan: async (): Promise<ScanReport> => {
       const result = await host.harness.runCli(["scan", "--json"]);
@@ -406,10 +407,10 @@ describe("review cases: interrupted-workflow message and the dispatch gate", () 
     const t = await setup();
     await killed(t, "thr_q2");
     queueWorkflowMessage(t.core, "thr_q2");
+    const checked = t.rechecked();
     await t.core.drain();
     expect(t.delivered("thr_q2")).toHaveLength(0); // waits for the re-check
-    await Bun.sleep(0);
-    await Bun.sleep(0);
+    await checked;
     t.core.now = t.core.queue[0]!.sendAt! + 1;
     await t.core.drain();
     expect(t.delivered("thr_q2")).toHaveLength(1);
@@ -424,8 +425,9 @@ describe("review cases: interrupted-workflow message and the dispatch gate", () 
     });
     t.core.completeTurn("thr_q3");
     queueWorkflowMessage(t.core, "thr_q3");
+    const checked = t.rechecked();
     await t.core.drain();
-    for (let i = 0; i < 5 && t.core.queue.length > 0; i++) await Bun.sleep(0);
+    await checked;
     expect(t.core.queue).toHaveLength(0);
     expect(t.delivered("thr_q3")).toHaveLength(0);
   });
