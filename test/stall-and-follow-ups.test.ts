@@ -18,7 +18,10 @@ const MINUTE = 60_000;
 async function setup(options: { armed?: boolean } = {}) {
   const core = new FakeCore();
   let mono = 0;
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
   await createPlugin({
     probe: async () => ({ reachable: true, detail: "HTTP 405" }),
     now: () => core.now,
@@ -26,9 +29,14 @@ async function setup(options: { armed?: boolean } = {}) {
     wait: async () => {},
   })(host.bb);
   // All three are off by default; these tests turn them on, as an operator would.
-  await host.harness.setSettings({ stallWatchdog: "20 minutes", continuationCheck: true, unfinishedFollowUp: true });
+  await host.harness.setSettings({
+    stallWatchdog: "20 minutes",
+    continuationCheck: true,
+    unfinishedFollowUp: true,
+  });
   core.hook = (context) => host.harness.registrations.hooks["message.dispatch"]!(context as never);
-  core.onRowCancelled = (row) => host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
+  core.onRowCancelled = (row) =>
+    host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
   if (options.armed !== false) expect((await host.harness.runCli(["arm"])).exitCode).toBe(0);
   const watchdog = async (): Promise<WatchdogReport> => {
     const result = await host.harness.runCli(["watchdog", "--json"]);
@@ -58,10 +66,17 @@ async function setup(options: { armed?: boolean } = {}) {
     sends: () => host.harness.inspection.sdk.callsTo("threads.send"),
     idle: async (threadId: string, text: string) => {
       const payload = core.reply(threadId, text);
-      const { errors } = await host.harness.behavior.emitThreadEvent("thread.idle", payload as never);
+      const { errors } = await host.harness.behavior.emitThreadEvent(
+        "thread.idle",
+        payload as never,
+      );
       expect(errors).toEqual([]);
     },
-    failed: async (threadId: string, failure: { errorInfo: Record<string, unknown> }, inputAccepted = true) => {
+    failed: async (
+      threadId: string,
+      failure: { errorInfo: Record<string, unknown> },
+      inputAccepted = true,
+    ) => {
       const { errors } = await host.harness.behavior.emitThreadEvent("turn.failed", {
         threadId,
         requestId: core.lastRequest(threadId)!.data.requestId as string,
@@ -76,9 +91,17 @@ async function setup(options: { armed?: boolean } = {}) {
   };
 }
 
-function running(core: FakeCore, id: string, execution: Execution = OPUS_ULTRACODE, providerId = "claude-code") {
+function running(
+  core: FakeCore,
+  id: string,
+  execution: Execution = OPUS_ULTRACODE,
+  providerId = "claude-code",
+) {
   core.addThread({ id, providerId });
-  core.startTurn(id, { input: [{ type: "text", text: "Build the feature", mentions: [] }], execution });
+  core.startTurn(id, {
+    input: [{ type: "text", text: "Build the feature", mentions: [] }],
+    execution,
+  });
 }
 
 function lastInput(core: FakeCore, id: string) {
@@ -97,7 +120,11 @@ describe("stalled-turn watchdog", () => {
     expect(t.stops()).toEqual([]);
 
     const report = await t.awake(1);
-    expect(entry(report, "thr_quiet")).toMatchObject({ state: "restarted", reason: "restarted", quietMinutes: 20 });
+    expect(entry(report, "thr_quiet")).toMatchObject({
+      state: "restarted",
+      reason: "restarted",
+      quietMinutes: 20,
+    });
     expect(t.stops()).toEqual([[{ threadId: "thr_quiet" }]]);
     const input = lastInput(t.core, "thr_quiet");
     expect(input[0]!.text.startsWith(STALL_TAG)).toBe(true);
@@ -105,7 +132,9 @@ describe("stalled-turn watchdog", () => {
     expect(input[0]!.visibility).toBe("agent-only");
     expect(t.core.lastRequest("thr_quiet")!.data.execution).toEqual(OPUS_ULTRACODE);
     expect(t.core.thread("thr_quiet").status).toBe("active");
-    expect((await t.host.harness.runCli(["explain", "thr_quiet"])).stdout).toContain("Stalled turn restarted");
+    expect((await t.host.harness.runCli(["explain", "thr_quiet"])).stdout).toContain(
+      "Stalled turn restarted",
+    );
 
     // The restarted turn stalls too: it is left alone, a person decides.
     const again = await t.awake(25);
@@ -168,7 +197,9 @@ describe("stalled-turn watchdog", () => {
   it("only reports before arm", async () => {
     const t = await setup({ armed: false });
     running(t.core, "thr_new");
-    expect(entry(await t.awake(20), "thr_new")?.reason).toBe("not-armed (run: bb provider-retry-advanced arm)");
+    expect(entry(await t.awake(20), "thr_new")?.reason).toBe(
+      "not-armed (run: bb provider-retry-advanced arm)",
+    );
     expect(t.stops()).toEqual([]);
   });
 
@@ -192,7 +223,10 @@ describe("stalled-turn watchdog", () => {
     t.core.stopHangs = true;
     expect(entry(await t.awake(20), "thr_moved")?.reason).toBe("stop-not-settled");
     t.core.interruptTurn("thr_moved", "manual-stop");
-    t.core.startTurn("thr_moved", { input: [{ type: "text", text: "do this instead", mentions: [] }], execution: OPUS_ULTRACODE });
+    t.core.startTurn("thr_moved", {
+      input: [{ type: "text", text: "do this instead", mentions: [] }],
+      execution: OPUS_ULTRACODE,
+    });
     t.core.completeTurn("thr_moved");
     expect(entry(await t.awake(1), "thr_moved")?.reason).toBe("stopped:thread-moved-on");
     expect((await t.awake(1)).entries).toEqual([]);
@@ -202,7 +236,11 @@ describe("stalled-turn watchdog", () => {
   it("lets a queued message continue the stopped thread instead of adding a second one", async () => {
     const t = await setup();
     running(t.core, "thr_queue");
-    await t.core.sdk().threads.send({ threadId: "thr_queue", input: [{ type: "text", text: "next", mentions: [] }], mode: "queue-if-active" });
+    await t.core.sdk().threads.send({
+      threadId: "thr_queue",
+      input: [{ type: "text", text: "next", mentions: [] }],
+      mode: "queue-if-active",
+    });
     expect(entry(await t.awake(20), "thr_queue")?.reason).toBe("stopped:queued-message-continues");
     expect(t.sends()).toEqual([]);
   });
@@ -238,21 +276,36 @@ describe("continuation check", () => {
     // The nudge's own turn promising again gets nothing more.
     await t.idle("thr_promise", "Продолжу с текущего состояния…");
     expect(t.sends()).toHaveLength(1);
-    expect((await t.host.harness.runCli(["status", "thr_promise"])).stdout).toContain("continuation\tsent");
+    expect((await t.host.harness.runCli(["status", "thr_promise"])).stdout).toContain(
+      "continuation\tsent",
+    );
   });
 
   it("also answers the real shape: a few commands, then «Продолжаю… Проверю…» and the turn ends", async () => {
     const t = await setup();
     await resumedThread(t, "thr_few");
-    for (let i = 0; i < 3; i++) t.core.completeItem("thr_few", t.core.startItem("thr_few", "commandExecution"), "commandExecution");
-    await t.idle("thr_few", "Продолжаю с сохранённых результатов. Проверю, какие исполнители завершили работу.");
+    for (let i = 0; i < 3; i++)
+      t.core.completeItem(
+        "thr_few",
+        t.core.startItem("thr_few", "commandExecution"),
+        "commandExecution",
+      );
+    await t.idle(
+      "thr_few",
+      "Продолжаю с сохранённых результатов. Проверю, какие исполнители завершили работу.",
+    );
     expect(lastInput(t.core, "thr_few")[0]!.text.startsWith(NUDGE_TAG)).toBe(true);
   });
 
   it("leaves a resumed turn alone when it did real work, answered for real, waits for background work or child threads", async () => {
     const t = await setup();
     await resumedThread(t, "thr_tools");
-    for (let i = 0; i < 6; i++) t.core.completeItem("thr_tools", t.core.startItem("thr_tools", "commandExecution"), "commandExecution");
+    for (let i = 0; i < 6; i++)
+      t.core.completeItem(
+        "thr_tools",
+        t.core.startItem("thr_tools", "commandExecution"),
+        "commandExecution",
+      );
     await t.idle("thr_tools", "Продолжу.");
 
     await resumedThread(t, "thr_parent");
@@ -261,7 +314,10 @@ describe("continuation check", () => {
     await t.idle("thr_parent", "Продолжаю: воркер в работе, жду его уведомления.");
 
     await resumedThread(t, "thr_answer");
-    await t.idle("thr_answer", "Готово: обзор закончен, два решения ждут тебя в заметке. Продолжу завтра по расписанию.");
+    await t.idle(
+      "thr_answer",
+      "Готово: обзор закончен, два решения ждут тебя в заметке. Продолжу завтра по расписанию.",
+    );
 
     await resumedThread(t, "thr_waiting");
     t.core.startBackgroundTask("thr_waiting", "local_workflow");
@@ -298,20 +354,46 @@ describe("continuation check", () => {
   });
 
   it("matches only a reply that opens with a promise to continue", () => {
-    for (const yes of ["Продолжу плановый обзор с сохранённого состояния.", "Продолжаю.", "Ок, продолжу", "**Продолжаю** с проверки", "Continuing with step 3.", "I'll continue now.", "Resuming the review."]) {
+    for (const yes of [
+      "Продолжу плановый обзор с сохранённого состояния.",
+      "Продолжаю.",
+      "Ок, продолжу",
+      "**Продолжаю** с проверки",
+      "Continuing with step 3.",
+      "I'll continue now.",
+      "Resuming the review.",
+    ]) {
       expect(looksLikeOnlyAPromise(yes), yes).toBe(true);
     }
-    for (const no of [null, "", "Готово: всё сделано, продолжу завтра.", "Продолжили. Нашлась проблема в патче.", "Продолжение уже идёт: изменения прошли проверки.", "The build passed; you can continue.", `Продолжу. ${"x".repeat(500)}`]) {
+    for (const no of [
+      null,
+      "",
+      "Готово: всё сделано, продолжу завтра.",
+      "Продолжили. Нашлась проблема в патче.",
+      "Продолжение уже идёт: изменения прошли проверки.",
+      "The build passed; you can continue.",
+      `Продолжу. ${"x".repeat(500)}`,
+    ]) {
       expect(looksLikeOnlyAPromise(no), String(no)).toBe(false);
     }
   });
 });
 
 describe("unfinished request follow-up", () => {
-  async function supersededAutomation(t: Awaited<ReturnType<typeof setup>>, id: string, accepted = true) {
+  async function supersededAutomation(
+    t: Awaited<ReturnType<typeof setup>>,
+    id: string,
+    accepted = true,
+  ) {
     t.core.addThread({ id, providerId: "codex" });
     t.core.startTurn(id, {
-      input: [{ type: "text", text: "[bb automation due:auto_review]\n\nReload registry and review the zone.", mentions: [] }],
+      input: [
+        {
+          type: "text",
+          text: "[bb automation due:auto_review]\n\nReload registry and review the zone.",
+          mentions: [],
+        },
+      ],
       execution: CODEX_HIGH,
       accepted,
     });
@@ -343,25 +425,37 @@ describe("unfinished request follow-up", () => {
     const t = await setup();
     await supersededAutomation(t, "thr_door", false);
     await t.idle("thr_door", "Ок.");
-    expect(lastInput(t.core, "thr_door")[0]!.text).toContain("The request was:\n\n[bb automation due:auto_review]");
+    expect(lastInput(t.core, "thr_door")[0]!.text).toContain(
+      "The request was:\n\n[bb automation due:auto_review]",
+    );
   });
 
   it("does nothing when the failure was retried and finished, or a person wrote after it", async () => {
     const t = await setup();
     // Retried by connectivity recovery and finished; a notification came after.
     t.core.addThread({ id: "thr_retried", providerId: "codex" });
-    t.core.startTurn("thr_retried", { input: [{ type: "text", text: "[bb automation due:auto_x]", mentions: [] }], execution: CODEX_HIGH });
+    t.core.startTurn("thr_retried", {
+      input: [{ type: "text", text: "[bb automation due:auto_x]", mentions: [] }],
+      execution: CODEX_HIGH,
+    });
     t.core.failTurn("thr_retried", FAILURES.codexPooler);
     await t.failed("thr_retried", FAILURES.codexPooler);
     await t.host.harness.runCli(["scan"]);
     t.core.reply("thr_retried", "Сделано.");
-    t.core.startTurn("thr_retried", { input: [{ type: "text", text: "[bb system] child done", mentions: [] }], execution: CODEX_HIGH, initiator: "system" });
+    t.core.startTurn("thr_retried", {
+      input: [{ type: "text", text: "[bb system] child done", mentions: [] }],
+      execution: CODEX_HIGH,
+      initiator: "system",
+    });
     await t.idle("thr_retried", "Принял.");
 
     // Superseded, but then Sergey wrote a new message himself.
     await supersededAutomation(t, "thr_person");
     t.core.reply("thr_person", "Принял уведомление.");
-    t.core.startTurn("thr_person", { input: [{ type: "text", text: "сделай другое", mentions: [] }], execution: CODEX_HIGH });
+    t.core.startTurn("thr_person", {
+      input: [{ type: "text", text: "сделай другое", mentions: [] }],
+      execution: CODEX_HIGH,
+    });
     await t.idle("thr_person", "Сделал другое.");
 
     expect(t.sends()).toEqual([]);
@@ -370,17 +464,32 @@ describe("unfinished request follow-up", () => {
   it("ignores failures no retry policy would retry and requests the system sent", async () => {
     const t = await setup();
     t.core.addThread({ id: "thr_auth", providerId: "claude-code" });
-    t.core.startTurn("thr_auth", { input: [{ type: "text", text: "task", mentions: [] }], execution: OPUS_ULTRACODE });
+    t.core.startTurn("thr_auth", {
+      input: [{ type: "text", text: "task", mentions: [] }],
+      execution: OPUS_ULTRACODE,
+    });
     t.core.failTurn("thr_auth", FAILURES.unauthorized);
     await t.failed("thr_auth", FAILURES.unauthorized);
-    t.core.startTurn("thr_auth", { input: [{ type: "text", text: "[bb system] note", mentions: [] }], execution: OPUS_ULTRACODE, initiator: "system" });
+    t.core.startTurn("thr_auth", {
+      input: [{ type: "text", text: "[bb system] note", mentions: [] }],
+      execution: OPUS_ULTRACODE,
+      initiator: "system",
+    });
     await t.idle("thr_auth", "Ок.");
 
     t.core.addThread({ id: "thr_sys", providerId: "codex" });
-    t.core.startTurn("thr_sys", { input: [{ type: "text", text: "[bb system] child failed", mentions: [] }], execution: CODEX_HIGH, initiator: "system" });
+    t.core.startTurn("thr_sys", {
+      input: [{ type: "text", text: "[bb system] child failed", mentions: [] }],
+      execution: CODEX_HIGH,
+      initiator: "system",
+    });
     t.core.failTurn("thr_sys", FAILURES.codexPooler);
     await t.failed("thr_sys", FAILURES.codexPooler);
-    t.core.startTurn("thr_sys", { input: [{ type: "text", text: "[bb system] child completed", mentions: [] }], execution: CODEX_HIGH, initiator: "system" });
+    t.core.startTurn("thr_sys", {
+      input: [{ type: "text", text: "[bb system] child completed", mentions: [] }],
+      execution: CODEX_HIGH,
+      initiator: "system",
+    });
     await t.idle("thr_sys", "Ок.");
 
     expect(t.sends()).toEqual([]);

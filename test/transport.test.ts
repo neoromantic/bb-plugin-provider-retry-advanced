@@ -26,7 +26,8 @@ describe("classifyFailedTurn", () => {
         type: "provider/error",
         data: {
           message: "Provider error",
-          detail: "API Error: 502 Account Pooler could not reach Anthropic. This is a server-side issue, usually temporary.",
+          detail:
+            "API Error: 502 Account Pooler could not reach Anthropic. This is a server-side issue, usually temporary.",
           errorInfo: { category: "internal", providerCode: null, httpStatusCode: 502 },
         },
       },
@@ -34,7 +35,11 @@ describe("classifyFailedTurn", () => {
       {
         seq: 5,
         type: "provider/error",
-        data: { message: "Provider error", detail: "API Error: 401 authentication_error", errorInfo: { category: "unauthorized", providerCode: null, httpStatusCode: 401 } },
+        data: {
+          message: "Provider error",
+          detail: "API Error: 401 authentication_error",
+          errorInfo: { category: "unauthorized", providerCode: null, httpStatusCode: 401 },
+        },
       },
     ];
     expect(classifyFailedTurn({ providerId: "claude-code", events })).toEqual({
@@ -45,7 +50,10 @@ describe("classifyFailedTurn", () => {
   });
 
   it("does not treat a bare provider 502 retry notice as connectivity", () => {
-    const events: EventLike[] = [claudeRetry(1), { seq: 2, type: "turn/completed", data: { status: "failed" } }];
+    const events: EventLike[] = [
+      claudeRetry(1),
+      { seq: 2, type: "turn/completed", data: { status: "failed" } },
+    ];
     expect(classifyFailedTurn({ providerId: "claude-code", events })).toEqual({
       kind: "other",
       reason: "not-transport:internal",
@@ -56,25 +64,47 @@ describe("classifyFailedTurn", () => {
     expect(
       classifyFailedTurn({
         providerId: "pi",
-        events: [{ seq: 1, type: "system/thread/interrupted", data: { reason: "host-daemon-restarted", cause: "host-connection-lost" } }],
+        events: [
+          {
+            seq: 1,
+            type: "system/thread/interrupted",
+            data: { reason: "host-daemon-restarted", cause: "host-connection-lost" },
+          },
+        ],
       }),
     ).toEqual({ kind: "transport", route: { kind: "host" }, signal: "host-connection-lost" });
     expect(
       classifyFailedTurn({
         providerId: "pi",
-        events: [{ seq: 1, type: "system/thread/interrupted", data: { reason: "host-daemon-restarted" } }],
+        events: [
+          { seq: 1, type: "system/thread/interrupted", data: { reason: "host-daemon-restarted" } },
+        ],
       }),
     ).toEqual({ kind: "transport", route: { kind: "host" }, signal: "host-daemon-restarted" });
     for (const reason of ["manual-stop", "host-removed", "provider-turn-idle"]) {
       expect(
-        classifyFailedTurn({ providerId: "codex", events: [{ seq: 1, type: "system/thread/interrupted", data: { reason } }] }),
+        classifyFailedTurn({
+          providerId: "codex",
+          events: [{ seq: 1, type: "system/thread/interrupted", data: { reason } }],
+        }),
       ).toEqual({ kind: "other", reason: `interrupted:${reason}` });
     }
     expect(
       classifyFailedTurn({
         providerId: "pi",
         events: [
-          { seq: 1, type: "provider/error", data: { detail: "fetch failed", errorInfo: { category: "connection-failed", providerCode: null, httpStatusCode: null } } },
+          {
+            seq: 1,
+            type: "provider/error",
+            data: {
+              detail: "fetch failed",
+              errorInfo: {
+                category: "connection-failed",
+                providerCode: null,
+                httpStatusCode: null,
+              },
+            },
+          },
         ],
       }),
     ).toEqual({ kind: "other", reason: "unsupported-provider:pi" });
@@ -102,7 +132,9 @@ describe("createProbe", () => {
   });
 
   it("treats a 5xx edge answer, a timeout or a socket error as unreachable", async () => {
-    expect(await createProbe(fakeFetch(() => new Response(null, { status: 503 })).impl)("chatgpt")).toEqual({
+    expect(
+      await createProbe(fakeFetch(() => new Response(null, { status: 503 })).impl)("chatgpt"),
+    ).toEqual({
       reachable: false,
       detail: "HTTP 503",
     });

@@ -4,10 +4,7 @@
 // `connectivity` field in `status --json`, cancel's not-found message, the
 // registered message.dispatch hook, and every host being armed before load
 // (a fresh, unarmed install retries nothing; see test/recovery.test.ts).
-import {
-  retryAvailabilityMethod,
-  type RetryAvailability,
-} from "../src/retry-contract.js";
+import { retryAvailabilityMethod, type RetryAvailability } from "../src/retry-contract.js";
 import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import {
   createFakePluginHost,
@@ -55,9 +52,7 @@ function rateLimits(overrides: Partial<RateLimits> = {}): RateLimits {
   };
 }
 
-function failure(
-  overrides: Partial<PluginTurnFailedEvent> = {},
-): PluginTurnFailedEvent {
+function failure(overrides: Partial<PluginTurnFailedEvent> = {}): PluginTurnFailedEvent {
   return makeTurnFailedEvent({
     threadId: THREAD_ID,
     requestId: REQUEST_ID,
@@ -71,9 +66,7 @@ function failure(
   });
 }
 
-function overloadedFailure(
-  overrides: Partial<PluginTurnFailedEvent> = {},
-): PluginTurnFailedEvent {
+function overloadedFailure(overrides: Partial<PluginTurnFailedEvent> = {}): PluginTurnFailedEvent {
   return failure({
     errorInfo: {
       category: "overloaded",
@@ -162,7 +155,9 @@ function createHost(
 }
 
 /** Fork: mark the install as armed, as after `bb provider-retry-advanced arm`. */
-async function armedBefore(host: { bb: { storage: { kv: { set(key: string, value: unknown): Promise<void> } } } }) {
+async function armedBefore(host: {
+  bb: { storage: { kv: { set(key: string, value: unknown): Promise<void> } } };
+}) {
   await host.bb.storage.kv.set("armed", { at: 0 });
 }
 
@@ -190,9 +185,7 @@ describe("provider retry policy", () => {
     expect(latest.kind).toBe("retry");
     if (latest.kind !== "retry") return;
     expect(latest.sendAt).toBeGreaterThan(RESET_AT_MS + RESET_BUFFER_MS);
-    expect(latest.sendAt).toBeLessThan(
-      RESET_AT_MS + RESET_BUFFER_MS + RESET_JITTER_MS,
-    );
+    expect(latest.sendAt).toBeLessThan(RESET_AT_MS + RESET_BUFFER_MS + RESET_JITTER_MS);
   });
 
   it("never schedules a retry in the past when the reset has already passed", () => {
@@ -431,15 +424,21 @@ describe("provider retry plugin", () => {
         default: false,
       },
     });
-    expect(host.harness.registrations.threadEventHandlers["turn.failed"]).toBe(
-      1,
-    );
+    expect(host.harness.registrations.threadEventHandlers["turn.failed"]).toBe(1);
     expect(host.harness.registrations.threadEventHandlers["thread.idle"]).toBe(1);
     // Fork: the dispatch hook enforces holds/cancels/supersession on this plugin's own retries.
     expect(typeof host.harness.registrations.hooks["message.dispatch"]).toBe("function");
-    expect(
-      host.harness.registrations.cli?.commands.map((command) => command.name),
-    ).toEqual(["status", "explain", "cancel", "retry", "hold", "release", "arm", "watchdog", "scan"]);
+    expect(host.harness.registrations.cli?.commands.map((command) => command.name)).toEqual([
+      "status",
+      "explain",
+      "cancel",
+      "retry",
+      "hold",
+      "release",
+      "arm",
+      "watchdog",
+      "scan",
+    ]);
     await host.harness.dispose();
   });
 
@@ -448,10 +447,7 @@ describe("provider retry plugin", () => {
     await armedBefore(host);
     await plugin(host.bb);
 
-    const { errors } = await host.harness.behavior.emitThreadEvent(
-      "turn.failed",
-      failure(),
-    );
+    const { errors } = await host.harness.behavior.emitThreadEvent("turn.failed", failure());
 
     expect(errors).toEqual([]);
     expect(host.retries).toHaveLength(1);
@@ -502,17 +498,12 @@ describe("provider retry plugin", () => {
         callRpc: async () => availability,
       });
       await armedBefore(host);
-    await plugin(host.bb);
+      await plugin(host.bb);
       expect(
-        (await host.harness.behavior.emitThreadEvent("turn.failed", failure()))
-          .errors,
+        (await host.harness.behavior.emitThreadEvent("turn.failed", failure())).errors,
       ).toEqual([]);
       expect(host.retries).toHaveLength(scheduled ? 1 : 0);
-      const explained = await host.harness.runCli([
-        "explain",
-        THREAD_ID,
-        "--json",
-      ]);
+      const explained = await host.harness.runCli(["explain", THREAD_ID, "--json"]);
       expect(explained.exitCode).toBe(0);
       const expected = {
         requestId: REQUEST_ID,
@@ -558,9 +549,7 @@ describe("provider retry plugin", () => {
     );
     expect(result.errors).toEqual([]);
     expect(host.retries).toHaveLength(1);
-    expect(host.retries[0]?.sendAt).toBeGreaterThanOrEqual(
-      RESET_AT_MS + RESET_BUFFER_MS,
-    );
+    expect(host.retries[0]?.sendAt).toBeGreaterThanOrEqual(RESET_AT_MS + RESET_BUFFER_MS);
     await host.harness.dispose();
   });
 
@@ -579,14 +568,13 @@ describe("provider retry plugin", () => {
     });
     await armedBefore(host);
     await plugin(host.bb);
-    expect(
-      (await host.harness.behavior.emitThreadEvent("turn.failed", failure()))
-        .errors,
-    ).toEqual([]);
+    expect((await host.harness.behavior.emitThreadEvent("turn.failed", failure())).errors).toEqual(
+      [],
+    );
     expect(host.retries).toEqual([]);
-    expect(
-      (await host.harness.runCli(["explain", THREAD_ID])).stdout,
-    ).toContain("source-unavailable");
+    expect((await host.harness.runCli(["explain", THREAD_ID])).stdout).toContain(
+      "source-unavailable",
+    );
     await host.harness.dispose();
   });
 
@@ -635,9 +623,9 @@ describe("provider retry plugin", () => {
         },
       ],
     });
-    expect(
-      host.harness.inspection.sdk.callsTo("threads.queue.list")[0]?.[0],
-    ).toEqual({ threadId: THREAD_ID });
+    expect(host.harness.inspection.sdk.callsTo("threads.queue.list")[0]?.[0]).toEqual({
+      threadId: THREAD_ID,
+    });
     await host.harness.dispose();
   });
 
@@ -648,15 +636,11 @@ describe("provider retry plugin", () => {
 
     const cancelled = await host.harness.runCli(["cancel", THREAD_ID]);
     expect(cancelled.exitCode).toBe(0);
-    expect(host.deleted).toEqual([
-      { threadId: THREAD_ID, queuedMessageId: "queued_1" },
-    ]);
+    expect(host.deleted).toEqual([{ threadId: THREAD_ID, queuedMessageId: "queued_1" }]);
 
     const retried = await host.harness.runCli(["retry", THREAD_ID]);
     expect(retried.exitCode).toBe(0);
-    expect(host.sent).toEqual([
-      { threadId: THREAD_ID, queuedMessageId: "queued_1", mode: "auto" },
-    ]);
+    expect(host.sent).toEqual([{ threadId: THREAD_ID, queuedMessageId: "queued_1", mode: "auto" }]);
     await host.harness.dispose();
   });
 
@@ -682,9 +666,7 @@ describe("provider retry plugin", () => {
       threadId: THREAD_ID,
     });
     expect(cancelled.exitCode, cancelled.stderr).toBe(0);
-    expect(host.deleted).toEqual([
-      { threadId: THREAD_ID, queuedMessageId: "queued_1" },
-    ]);
+    expect(host.deleted).toEqual([{ threadId: THREAD_ID, queuedMessageId: "queued_1" }]);
 
     const missing = await host.harness.runCli(["cancel"]);
     expect(missing.exitCode).toBe(2);

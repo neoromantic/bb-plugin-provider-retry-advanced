@@ -22,7 +22,12 @@ export function stallText(minutes: number): string {
 
 export const NUDGE_TEXT = `${NUDGE_TAG} After the automatic retry your turn ended on a note that you would continue, without finishing. Do the next steps of the task now instead of announcing them; end the turn only when the task is done or you are waiting for something specific, and say what. ${CHECK_STATE_HINT}`;
 
-export function unfinishedText(args: { failedAt: number; automation: boolean; accepted: boolean; input: string }): string {
+export function unfinishedText(args: {
+  failedAt: number;
+  automation: boolean;
+  accepted: boolean;
+  input: string;
+}): string {
   const what = args.automation ? "an automation run" : "a message";
   const head = `${UNFINISHED_TAG} The request sent at ${new Date(args.failedAt).toISOString().slice(0, 16).replace("T", " ")} UTC (${what}) failed with a provider error before it finished, and later system notifications took its turn, so it was never completed. Finish that request now; check what was already done first. ${CHECK_STATE_HINT}`;
   // Input the provider never accepted is not in its session: repeat it, as core's own retry does.
@@ -90,9 +95,13 @@ export function parseRequest(event: RawEvent): TurnRequest {
         ? null
         : {
             ...(str(exec.model) === undefined ? {} : { model: str(exec.model) }),
-            ...(str(exec.reasoningLevel) === undefined ? {} : { reasoningLevel: str(exec.reasoningLevel) }),
+            ...(str(exec.reasoningLevel) === undefined
+              ? {}
+              : { reasoningLevel: str(exec.reasoningLevel) }),
             ...(str(exec.serviceTier) === undefined ? {} : { serviceTier: str(exec.serviceTier) }),
-            ...(str(exec.permissionMode) === undefined ? {} : { permissionMode: str(exec.permissionMode) }),
+            ...(str(exec.permissionMode) === undefined
+              ? {}
+              : { permissionMode: str(exec.permissionMode) }),
           },
   };
 }
@@ -110,9 +119,18 @@ type EventsList = BbPluginApi["sdk"]["threads"]["events"]["list"];
 
 export async function listEvents(
   bb: BbPluginApi,
-  args: { threadId: string; types?: string[]; afterSeq?: number; beforeSeq?: number; order: "asc" | "desc"; limit: number },
+  args: {
+    threadId: string;
+    types?: string[];
+    afterSeq?: number;
+    beforeSeq?: number;
+    order: "asc" | "desc";
+    limit: number;
+  },
 ): Promise<RawEvent[]> {
-  const list = bb.sdk.threads.events.list as unknown as (input: Record<string, unknown>) => ReturnType<EventsList>;
+  const list = bb.sdk.threads.events.list as unknown as (
+    input: Record<string, unknown>,
+  ) => ReturnType<EventsList>;
   return (await list({
     threadId: args.threadId,
     ...(args.types === undefined ? {} : { types: args.types }),
@@ -123,13 +141,33 @@ export async function listEvents(
   })) as unknown as RawEvent[];
 }
 
-export async function latestRequest(bb: BbPluginApi, threadId: string): Promise<TurnRequest | null> {
-  const [event] = await listEvents(bb, { threadId, types: ["client/turn/requested"], order: "desc", limit: 1 });
+export async function latestRequest(
+  bb: BbPluginApi,
+  threadId: string,
+): Promise<TurnRequest | null> {
+  const [event] = await listEvents(bb, {
+    threadId,
+    types: ["client/turn/requested"],
+    order: "desc",
+    limit: 1,
+  });
   return event === undefined ? null : parseRequest(event);
 }
 
-export async function requestsAfter(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<TurnRequest[]> {
-  return (await listEvents(bb, { threadId, types: ["client/turn/requested"], afterSeq, order: "asc", limit: 100 })).map(parseRequest);
+export async function requestsAfter(
+  bb: BbPluginApi,
+  threadId: string,
+  afterSeq: number,
+): Promise<TurnRequest[]> {
+  return (
+    await listEvents(bb, {
+      threadId,
+      types: ["client/turn/requested"],
+      afterSeq,
+      order: "asc",
+      limit: 100,
+    })
+  ).map(parseRequest);
 }
 
 /** Items that are the model's own output, not a tool it runs. */
@@ -141,10 +179,26 @@ function itemOf(event: RawEvent): { id: string; type: string } {
 }
 
 /** Types of tool items (commands, tool calls, subagents, compaction…) started after `afterSeq` and not completed. */
-export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<string[]> {
-  const started = await listEvents(bb, { threadId, types: ["item/started"], afterSeq, order: "desc", limit: 50 });
+export async function openToolItems(
+  bb: BbPluginApi,
+  threadId: string,
+  afterSeq: number,
+): Promise<string[]> {
+  const started = await listEvents(bb, {
+    threadId,
+    types: ["item/started"],
+    afterSeq,
+    order: "desc",
+    limit: 50,
+  });
   if (started.length === 0) return [];
-  const completed = await listEvents(bb, { threadId, types: ["item/completed"], afterSeq, order: "desc", limit: 200 });
+  const completed = await listEvents(bb, {
+    threadId,
+    types: ["item/completed"],
+    afterSeq,
+    order: "desc",
+    limit: 200,
+  });
   const done = new Set(completed.map((event) => itemOf(event).id));
   return started
     .map(itemOf)
@@ -153,20 +207,44 @@ export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq:
 }
 
 /** How many tool items (commands, tool calls, subagents…) the turn after `afterSeq` ran; capped at 200. */
-export async function countToolItems(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<number> {
-  const items = await listEvents(bb, { threadId, types: ["item/started", "item/completed"], afterSeq, order: "desc", limit: 200 });
-  return new Set(items.map(itemOf).filter((item) => !MODEL_ITEM_TYPES.has(item.type)).map((item) => item.id)).size;
+export async function countToolItems(
+  bb: BbPluginApi,
+  threadId: string,
+  afterSeq: number,
+): Promise<number> {
+  const items = await listEvents(bb, {
+    threadId,
+    types: ["item/started", "item/completed"],
+    afterSeq,
+    order: "desc",
+    limit: 200,
+  });
+  return new Set(
+    items
+      .map(itemOf)
+      .filter((item) => !MODEL_ITEM_TYPES.has(item.type))
+      .map((item) => item.id),
+  ).size;
 }
 
 /** Child threads still running: a parent that ends its turn while they work is waiting, not stuck. */
 export async function runningChildren(bb: BbPluginApi, threadId: string): Promise<number> {
-  const rows = (await bb.sdk.threads.list({ parentThreadId: threadId, archived: false, includeHidden: true, limit: 200 })) as unknown as Array<{ status: string }>;
+  const rows = (await bb.sdk.threads.list({
+    parentThreadId: threadId,
+    archived: false,
+    includeHidden: true,
+    limit: 200,
+  })) as unknown as Array<{ status: string }>;
   return rows.filter((row) => row.status === "active" || row.status === "starting").length;
 }
 
 interface ListRow {
   id: string;
-  activity?: { activeBackgroundAgentCount?: number; activeBackgroundCommandCount?: number; activeWorkflowCount?: number };
+  activity?: {
+    activeBackgroundAgentCount?: number;
+    activeBackgroundCommandCount?: number;
+    activeWorkflowCount?: number;
+  };
 }
 
 /**
@@ -176,11 +254,20 @@ interface ListRow {
  */
 export async function openBackgroundWork(bb: BbPluginApi, threadId: string): Promise<number> {
   for (let offset = 0; ; offset += 200) {
-    const page = (await bb.sdk.threads.list({ archived: false, includeHidden: true, limit: 200, offset })) as unknown as ListRow[];
+    const page = (await bb.sdk.threads.list({
+      archived: false,
+      includeHidden: true,
+      limit: 200,
+      offset,
+    })) as unknown as ListRow[];
     const row = page.find((thread) => thread.id === threadId);
     if (row !== undefined) {
       const activity = row.activity ?? {};
-      return (activity.activeBackgroundAgentCount ?? 0) + (activity.activeBackgroundCommandCount ?? 0) + (activity.activeWorkflowCount ?? 0);
+      return (
+        (activity.activeBackgroundAgentCount ?? 0) +
+        (activity.activeBackgroundCommandCount ?? 0) +
+        (activity.activeWorkflowCount ?? 0)
+      );
     }
     if (page.length < 200) return 0;
   }
@@ -202,7 +289,9 @@ export async function sendAgentOnly(
   args: { threadId: string; text: string; execution: Execution | null },
 ): Promise<void> {
   const execution = args.execution ?? {};
-  const send = bb.sdk.threads.send as unknown as (input: Record<string, unknown>) => Promise<unknown>;
+  const send = bb.sdk.threads.send as unknown as (
+    input: Record<string, unknown>,
+  ) => Promise<unknown>;
   await send({
     threadId: args.threadId,
     input: [{ type: "text", text: args.text, mentions: [], visibility: "agent-only" }],

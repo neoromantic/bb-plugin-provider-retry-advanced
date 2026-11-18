@@ -174,7 +174,6 @@ workflow that started less than a scan before the restart or while the
 plugin was off, and a workflow BB still shows as running after its process
 died (no evidence that it is dead, so nothing is sent).
 
-
 ## Compatibility
 
 - BB 0.46.1 or later, plugin SDK 0.6.49. Runs on the BB server.
@@ -186,7 +185,6 @@ died (no evidence that it is dead, so nothing is sent).
 - The probe runs from the BB server. With a remote machine the provider call
   may leave from that machine, so a server-side probe is an approximation
   there; a turn that fails again is resumed again at the next scan.
-
 
 ## Development and tests
 
@@ -208,4 +206,3 @@ pass of bb 0.46.1), so the tests check behavior against core's rules rather
 than against the plugin. It is not core: it has no admission lock, no claimed
 rows and no provider, so it cannot prove concurrency guarantees.
 `test/review-cases.test.ts` keeps the independent review's failing cases.
-

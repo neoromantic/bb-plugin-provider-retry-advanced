@@ -9,32 +9,48 @@ it("a newer failure invalidates an older chain refresh already in flight", async
   core.addThread({ id: "review-refresh", providerId: "codex" });
   core.startTurn("review-refresh", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-refresh", FAILURES.codexPooler);
-  await core.retry({ threadId: "review-refresh", reason: "Connectivity restored", sendAt: core.now + 1000 });
+  await core.retry({
+    threadId: "review-refresh",
+    reason: "Connectivity restored",
+    sendAt: core.now + 1000,
+  });
   const row = core.queue[0]!;
   const sdk = core.sdk();
   let release!: () => void;
-  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let captured!: () => void;
-  const capturedRequest = new Promise<void>((resolve) => { captured = resolve; });
+  const capturedRequest = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
   let intercept = true;
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: {
-    ...sdk,
-    threads: {
-      ...sdk.threads,
-      events: { list: async (args: Parameters<typeof sdk.threads.events.list>[0]) => {
-        const result = await sdk.threads.events.list(args);
-        if (intercept && args.types?.includes("client/turn/requested")) {
-          intercept = false;
-          captured();
-          await blocked;
-        }
-        return result;
-      } },
-    },
-  } as never });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: {
+      ...sdk,
+      threads: {
+        ...sdk.threads,
+        events: {
+          list: async (args: Parameters<typeof sdk.threads.events.list>[0]) => {
+            const result = await sdk.threads.events.list(args);
+            if (intercept && args.types?.includes("client/turn/requested")) {
+              intercept = false;
+              captured();
+              await blocked;
+            }
+            return result;
+          },
+        },
+      },
+    } as never,
+  });
   await host.bb.storage.kv.set("armed", { at: 0 });
   const recovery = createTransportRecovery(host.bb, {
-    now: () => core.now, enabled: () => true, workflowRecovery: () => false, probe: async () => ({ reachable: true, detail: "HTTP 405" }),
+    now: () => core.now,
+    enabled: () => true,
+    workflowRecovery: () => false,
+    probe: async () => ({ reachable: true, detail: "HTTP 405" }),
   });
   await recovery.init();
   core.hook = (context) => recovery.decideDispatch(context as never);

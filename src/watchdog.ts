@@ -94,7 +94,8 @@ interface ThreadState {
 }
 
 export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptions): StallWatchdog {
-  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const wait =
+    options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let lastWall = options.now();
   let lastMono = options.monotonic();
   let countingSince = lastWall;
@@ -113,7 +114,9 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     const wallGap = wall - lastWall;
     if (wallGap - (mono - lastMono) > SLEEP_GAP_MS || wallGap > MAX_CHECK_GAP_MS) {
       countingSince = wall;
-      bb.log.info(`Stall watchdog: BB was asleep or suspended for about ${Math.round(wallGap / 60_000)} min; counting quiet time from now.`);
+      bb.log.info(
+        `Stall watchdog: BB was asleep or suspended for about ${Math.round(wallGap / 60_000)} min; counting quiet time from now.`,
+      );
     }
     lastWall = wall;
     lastMono = mono;
@@ -137,7 +140,12 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
   /** Sends the one continue for a stopped turn once the thread is idle; returns what happened. */
   async function sendContinue(threadId: string, record: StallRecord): Promise<string> {
     const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
-    if (thread.status === "stopping" || thread.status === "active" || thread.status === "starting" || thread.status === "pending") {
+    if (
+      thread.status === "stopping" ||
+      thread.status === "active" ||
+      thread.status === "starting" ||
+      thread.status === "pending"
+    ) {
       return "stop-not-settled";
     }
     // Failed while stopping: the connectivity scan and the stock policy own a failed thread.
@@ -155,9 +163,15 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
       await saveRecord(threadId, { ...record, continued: true });
       return "stopped:queued-message-continues";
     }
-    await sendAgentOnly(bb, { threadId, text: stallText(record.minutes), execution: record.execution });
+    await sendAgentOnly(bb, {
+      threadId,
+      text: stallText(record.minutes),
+      execution: record.execution,
+    });
     await saveRecord(threadId, { ...record, continued: true });
-    bb.log.info(`Stall watchdog: sent one continue to ${threadId} for stalled turn ${record.requestId}.`);
+    bb.log.info(
+      `Stall watchdog: sent one continue to ${threadId} for stalled turn ${record.requestId}.`,
+    );
     return "restarted";
   }
 
@@ -180,17 +194,31 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     if (options.isHeld(thread.id)) return "held";
     if (thread.originPluginId === WORKFLOW_ENGINE_PLUGIN_ID) return "workflow-engine-owned";
     if (await hasPendingInteraction(bb, thread.id)) return "waiting-for-user";
-    if ((thread.activeBackgroundAgentCount ?? 0) > 0 || (await openBackgroundWork(bb, thread.id)) > 0) return "background-work-open";
+    if (
+      (thread.activeBackgroundAgentCount ?? 0) > 0 ||
+      (await openBackgroundWork(bb, thread.id)) > 0
+    )
+      return "background-work-open";
     const open = await openToolItems(bb, thread.id, afterSeq);
     if (open.length > 0) return `tool-running:${open[0]}`;
     return null;
   }
 
-  async function inspect(threadId: string, at: number, limitMs: number): Promise<StallEntry | null> {
+  async function inspect(
+    threadId: string,
+    at: number,
+    limitMs: number,
+  ): Promise<StallEntry | null> {
     const quiet = await quietSince(threadId);
     const quietMs = at - quiet.at;
     if (quietMs < limitMs) return null;
-    const entry: StallEntry = { threadId, requestId: null, state: "skipped", reason: "", quietMinutes: Math.floor(quietMs / 60_000) };
+    const entry: StallEntry = {
+      threadId,
+      requestId: null,
+      state: "skipped",
+      reason: "",
+      quietMinutes: Math.floor(quietMs / 60_000),
+    };
     const request = await latestRequest(bb, threadId);
     if (request === null) {
       entry.reason = "no-request";
@@ -218,8 +246,16 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
       return entry;
     }
     const minutes = Math.round(limitMs / 60_000);
-    await saveRecord(threadId, { requestId: request.requestId, stoppedAt: at, continued: false, minutes, execution: request.execution });
-    bb.log.info(`Stall watchdog: ${threadId} made no progress for ${entry.quietMinutes} min (turn ${request.requestId}); stopping it to restart once.`);
+    await saveRecord(threadId, {
+      requestId: request.requestId,
+      stoppedAt: at,
+      continued: false,
+      minutes,
+      execution: request.execution,
+    });
+    bb.log.info(
+      `Stall watchdog: ${threadId} made no progress for ${entry.quietMinutes} min (turn ${request.requestId}); stopping it to restart once.`,
+    );
     await bb.sdk.threads.stop({ threadId });
     await settle(threadId);
     entry.reason = await sendContinue(threadId, records.get(threadId)!);
@@ -249,8 +285,16 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
         await saveRecord(threadId, { ...record, continued: true });
         continue;
       }
-      const reason = await sendContinue(threadId, record).catch((error: unknown) => `continue-error:${String(error)}`);
-      report.entries.push({ threadId, requestId: record.requestId, state: reason === "restarted" ? "restarted" : "skipped", reason, quietMinutes: 0 });
+      const reason = await sendContinue(threadId, record).catch(
+        (error: unknown) => `continue-error:${String(error)}`,
+      );
+      report.entries.push({
+        threadId,
+        requestId: record.requestId,
+        state: reason === "restarted" ? "restarted" : "skipped",
+        reason,
+        quietMinutes: 0,
+      });
     }
 
     const runningThreads = await bb.sdk.threads.listRunning();
@@ -261,7 +305,13 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
         if (entry !== null) report.entries.push(entry);
       } catch (error) {
         bb.log.warn(`Stall watchdog could not check ${id}: ${String(error)}`);
-        report.entries.push({ threadId: id, requestId: null, state: "skipped", reason: `error:${String(error)}`, quietMinutes: 0 });
+        report.entries.push({
+          threadId: id,
+          requestId: null,
+          state: "skipped",
+          reason: `error:${String(error)}`,
+          quietMinutes: 0,
+        });
       }
     }
     return report;

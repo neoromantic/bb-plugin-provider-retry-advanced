@@ -101,17 +101,16 @@ From then on it checks when it loads and 60 seconds after each scan.
 - Automation turns are covered like any other turn: they run in ordinary threads, so both the
   retries and the follow-ups apply.
 
-| | Provider retry (bundled) | Provider retry advanced |
-| --- | --- | --- |
-| Provider overload | retried, delay doubles, max 4 | same, unchanged |
-| Subscription-window limit | retried after the reset, `maximumWait` | same, unchanged |
-| Connection failed, stream disconnected, Account Pooler "could not reach", socket timeout/reset | not retried | resumed once the provider answers again |
-| Connection to the thread's machine lost, or its host daemon restarted | not retried | queued until the machine reconnects |
-| Claude Code workflow killed by a BB or host daemon restart | not resumed | one message to resume the run |
-| Failures from before the plugin loaded | no | yes, found by the first scan |
-| Attempt limit for connectivity failures | – | none |
-| Backoff for connectivity failures | – | none, fixed 60 s scan |
-
+|                                                                                                | Provider retry (bundled)               | Provider retry advanced                 |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------- |
+| Provider overload                                                                              | retried, delay doubles, max 4          | same, unchanged                         |
+| Subscription-window limit                                                                      | retried after the reset, `maximumWait` | same, unchanged                         |
+| Connection failed, stream disconnected, Account Pooler "could not reach", socket timeout/reset | not retried                            | resumed once the provider answers again |
+| Connection to the thread's machine lost, or its host daemon restarted                          | not retried                            | queued until the machine reconnects     |
+| Claude Code workflow killed by a BB or host daemon restart                                     | not resumed                            | one message to resume the run           |
+| Failures from before the plugin loaded                                                         | no                                     | yes, found by the first scan            |
+| Attempt limit for connectivity failures                                                        | –                                      | none                                    |
+| Backoff for connectivity failures                                                              | –                                      | none, fixed 60 s scan                   |
 
 ## Usage
 

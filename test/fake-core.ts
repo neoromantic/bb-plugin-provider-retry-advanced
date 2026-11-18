@@ -21,7 +21,11 @@ import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
 /** A `threads.list` row: the `threads.get` DTO plus list-only fields. */
 type Thread = ReturnType<typeof makeThreadResponse> & {
-  activity: { activeBackgroundAgentCount: number; activeBackgroundCommandCount: number; activeWorkflowCount: number };
+  activity: {
+    activeBackgroundAgentCount: number;
+    activeBackgroundCommandCount: number;
+    activeWorkflowCount: number;
+  };
   environmentHostId: string | null;
   hasPendingInteraction: boolean;
 };
@@ -93,7 +97,11 @@ export class FakeCore {
     const { activity, environmentHostId, hasPendingInteraction, ...rest } = overrides;
     const thread: Thread = {
       ...makeThreadResponse({ status: "idle", ...rest }),
-      activity: activity ?? { activeBackgroundAgentCount: 0, activeBackgroundCommandCount: 0, activeWorkflowCount: 0 },
+      activity: activity ?? {
+        activeBackgroundAgentCount: 0,
+        activeBackgroundCommandCount: 0,
+        activeWorkflowCount: 0,
+      },
       environmentHostId: environmentHostId ?? "host_local",
       hasPendingInteraction: hasPendingInteraction ?? false,
     };
@@ -164,11 +172,17 @@ export class FakeCore {
   }
 
   lastRequest(threadId: string): FakeEvent | null {
-    return [...this.events.get(threadId)!].reverse().find((e) => e.type === "client/turn/requested") ?? null;
+    return (
+      [...this.events.get(threadId)!].reverse().find((e) => e.type === "client/turn/requested") ??
+      null
+    );
   }
 
   /** The provider's final error, then the failed completion core turns into `error`. */
-  failTurn(threadId: string, error: { message?: string; detail?: string; errorInfo: Record<string, unknown> | null }): void {
+  failTurn(
+    threadId: string,
+    error: { message?: string; detail?: string; errorInfo: Record<string, unknown> | null },
+  ): void {
     this.append(threadId, "provider/error", {
       providerThreadId: this.providerSessions.get(threadId),
       message: error.message ?? "Provider error",
@@ -184,7 +198,9 @@ export class FakeCore {
       reason,
       ...(cause === undefined ? {} : { cause }),
     });
-    this.setThread(threadId, { status: reason === "manual-stop" || reason === "host-removed" ? "idle" : "error" });
+    this.setThread(threadId, {
+      status: reason === "manual-stop" || reason === "host-removed" ? "idle" : "error",
+    });
   }
 
   completeTurn(threadId: string): void {
@@ -204,7 +220,10 @@ export class FakeCore {
   }
 
   /** The agent's reply, then the completed turn; returns core's `thread.idle` payload. */
-  reply(threadId: string, text: string): { thread: Record<string, unknown>; lastAssistantText: string } {
+  reply(
+    threadId: string,
+    text: string,
+  ): { thread: Record<string, unknown>; lastAssistantText: string } {
     const id = this.startItem(threadId, "agentMessage");
     this.append(threadId, "item/completed", { item: { id, type: "agentMessage", text } });
     this.completeTurn(threadId);
@@ -226,7 +245,15 @@ export class FakeCore {
   startBackgroundTask(threadId: string, taskType: string, workflowName?: string): string {
     const itemId = `item_${++this.ids}`;
     this.append(threadId, "item/started", {
-      item: { id: itemId, type: "backgroundTask", familyId: `task_${itemId}`, status: "pending", taskStatus: "running", taskType, ...(workflowName === undefined ? {} : { workflowName }) },
+      item: {
+        id: itemId,
+        type: "backgroundTask",
+        familyId: `task_${itemId}`,
+        status: "pending",
+        taskStatus: "running",
+        taskType,
+        ...(workflowName === undefined ? {} : { workflowName }),
+      },
     });
     this.countBackgroundTask(threadId, taskType, 1);
     return itemId;
@@ -237,16 +264,46 @@ export class FakeCore {
    * `resumeFromRunId` when it resumes a run), the background task it starts,
    * and the call's result, which names the run.
    */
-  startWorkflowRun(threadId: string, workflowName: string, runId: string, resumeFromRunId?: string): string {
+  startWorkflowRun(
+    threadId: string,
+    workflowName: string,
+    runId: string,
+    resumeFromRunId?: string,
+  ): string {
     const callId = `item_${++this.ids}`;
     const itemId = `item_${++this.ids}`;
-    const args = resumeFromRunId === undefined ? { script: "export const meta = {}" } : { resumeFromRunId };
-    this.append(threadId, "item/started", { item: { id: callId, type: "toolCall", tool: "Workflow", arguments: args, status: "inProgress" } });
+    const args =
+      resumeFromRunId === undefined ? { script: "export const meta = {}" } : { resumeFromRunId };
     this.append(threadId, "item/started", {
-      item: { id: itemId, type: "backgroundTask", familyId: `task_${itemId}`, status: "pending", taskStatus: "running", taskType: "local_workflow", workflowName, parentToolCallId: callId },
+      item: {
+        id: callId,
+        type: "toolCall",
+        tool: "Workflow",
+        arguments: args,
+        status: "inProgress",
+      },
+    });
+    this.append(threadId, "item/started", {
+      item: {
+        id: itemId,
+        type: "backgroundTask",
+        familyId: `task_${itemId}`,
+        status: "pending",
+        taskStatus: "running",
+        taskType: "local_workflow",
+        workflowName,
+        parentToolCallId: callId,
+      },
     });
     this.append(threadId, "item/completed", {
-      item: { id: callId, type: "toolCall", tool: "Workflow", arguments: args, status: "completed", result: `Workflow launched in background.\nRun ID: ${runId}` },
+      item: {
+        id: callId,
+        type: "toolCall",
+        tool: "Workflow",
+        arguments: args,
+        status: "completed",
+        result: `Workflow launched in background.\nRun ID: ${runId}`,
+      },
     });
     this.countBackgroundTask(threadId, "local_workflow", 1);
     return itemId;
@@ -257,27 +314,45 @@ export class FakeCore {
     this.setThread(threadId, {
       activity: {
         ...activity,
-        activeWorkflowCount: activity.activeWorkflowCount + (taskType === "local_workflow" ? delta : 0),
-        activeBackgroundCommandCount: activity.activeBackgroundCommandCount + (taskType === "local_bash" ? delta : 0),
+        activeWorkflowCount:
+          activity.activeWorkflowCount + (taskType === "local_workflow" ? delta : 0),
+        activeBackgroundCommandCount:
+          activity.activeBackgroundCommandCount + (taskType === "local_bash" ? delta : 0),
       },
     });
   }
 
   private openBackgroundItems(threadId: string): Array<Record<string, unknown>> {
     const events = this.events.get(threadId)!;
-    const closed = new Set(events.filter((e) => e.type === "item/backgroundTask/completed").map((e) => (e.data.item as { id: string }).id));
+    const closed = new Set(
+      events
+        .filter((e) => e.type === "item/backgroundTask/completed")
+        .map((e) => (e.data.item as { id: string }).id),
+    );
     return events
-      .filter((e) => e.type === "item/started" && (e.data.item as { type: string }).type === "backgroundTask")
+      .filter(
+        (e) =>
+          e.type === "item/started" && (e.data.item as { type: string }).type === "backgroundTask",
+      )
       .map((e) => e.data.item as Record<string, unknown>)
       .filter((item) => !closed.has(item.id as string));
   }
 
   /** Claude Code's own close (finished, TaskStop, a manual stop): the provider adds a presentation. */
-  closeBackgroundTask(threadId: string, itemId: string, taskStatus: "completed" | "failed" | "stopped"): void {
+  closeBackgroundTask(
+    threadId: string,
+    itemId: string,
+    taskStatus: "completed" | "failed" | "stopped",
+  ): void {
     const item = this.openBackgroundItems(threadId).find((open) => open.id === itemId)!;
     this.append(threadId, "item/backgroundTask/completed", {
       providerThreadId: this.providerSessions.get(threadId),
-      item: { ...item, status: taskStatus === "stopped" ? "interrupted" : taskStatus, taskStatus, presentation: { title: "Workflow" } },
+      item: {
+        ...item,
+        status: taskStatus === "stopped" ? "interrupted" : taskStatus,
+        taskStatus,
+        presentation: { title: "Workflow" },
+      },
     });
     this.countBackgroundTask(threadId, item.taskType as string, -1);
   }
@@ -308,8 +383,15 @@ export class FakeCore {
     for (const field of LIST_ONLY_FIELDS) delete dto[field];
     // core's combined input: the rows' content, or the inline message being sent.
     const blocks = rows.length > 0 ? rows.flatMap((row) => row.content) : inline;
-    const text = blocks.filter((block) => block.type === "text").map((block) => block.text as string).join("\n");
-    return (await this.hook({ thread: dto, queuedMessages: rows.map((row) => ({ ...row })), input: { blocks, text } })) as never;
+    const text = blocks
+      .filter((block) => block.type === "text")
+      .map((block) => block.text as string)
+      .join("\n");
+    return (await this.hook({
+      thread: dto,
+      queuedMessages: rows.map((row) => ({ ...row })),
+      input: { blocks, text },
+    })) as never;
   }
 
   /** core's queue drain: each eligible row runs the hook pass, then dispatches. */
@@ -317,7 +399,11 @@ export class FakeCore {
     for (const row of [...this.queue]) {
       const thread = this.thread(row.threadId);
       if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
-      if (row.waitingOn?.kind === "host-offline" && this.hostsOnline.get(thread.environmentHostId ?? "") === false) continue;
+      if (
+        row.waitingOn?.kind === "host-offline" &&
+        this.hostsOnline.get(thread.environmentHostId ?? "") === false
+      )
+        continue;
       if (row.sendAt !== null && row.sendAt > this.now) continue;
       if (thread.status === "active") continue;
       const decision = await this.runHook(row.threadId, [row]);
@@ -346,18 +432,32 @@ export class FakeCore {
   private failedTurn(threadId: string): { request: FakeEvent; accepted: boolean } {
     const thread = this.thread(threadId);
     if (thread.status !== "error") {
-      throw new CoreHttpError(409, "no_failed_turn", `Thread ${threadId} has no failed turn to retry: it is ${thread.status}.`);
+      throw new CoreHttpError(
+        409,
+        "no_failed_turn",
+        `Thread ${threadId} has no failed turn to retry: it is ${thread.status}.`,
+      );
     }
     const request = this.lastRequest(threadId);
     if (request === null) throw new CoreHttpError(409, "no_failed_turn", "never dispatched");
     const requestId = request.data.requestId as string;
     const accepted = this.events
       .get(threadId)!
-      .some((e) => e.seq > request.seq && e.type === "turn/input/accepted" && e.data.clientRequestId === requestId);
+      .some(
+        (e) =>
+          e.seq > request.seq &&
+          e.type === "turn/input/accepted" &&
+          e.data.clientRequestId === requestId,
+      );
     return { request, accepted };
   }
 
-  async retry(args: { threadId: string; turnRequestId?: string; sendAt?: number; reason?: string }) {
+  async retry(args: {
+    threadId: string;
+    turnRequestId?: string;
+    sendAt?: number;
+    reason?: string;
+  }) {
     const { request, accepted } = this.failedTurn(args.threadId);
     const data = request.data as {
       requestId: string;
@@ -367,21 +467,39 @@ export class FakeCore {
       execution: Execution;
     };
     if (args.turnRequestId !== undefined && args.turnRequestId !== data.requestId) {
-      throw new CoreHttpError(409, "no_failed_turn", `Turn ${args.turnRequestId} is not the failed turn.`);
+      throw new CoreHttpError(
+        409,
+        "no_failed_turn",
+        `Turn ${args.turnRequestId} is not the failed turn.`,
+      );
     }
     const originalRequestId = data.retryOfRequestId ?? data.requestId;
     const key = `${args.threadId}:${originalRequestId}`;
     const queued = this.queue.some(
-      (row) => row.threadId === args.threadId && row.payload.kind === "retry" && row.payload.retryOfTurnRequestId === originalRequestId,
+      (row) =>
+        row.threadId === args.threadId &&
+        row.payload.kind === "retry" &&
+        row.payload.retryOfTurnRequestId === originalRequestId,
     );
     if (this.retriesInFlight.has(key) || queued) {
-      throw new CoreHttpError(409, "retry_already_queued", `Turn ${originalRequestId} already has a retry waiting.`);
+      throw new CoreHttpError(
+        409,
+        "retry_already_queued",
+        `Turn ${originalRequestId} already has a retry waiting.`,
+      );
     }
     this.retriesInFlight.add(key);
     try {
       const attempt = (data.retryAttempt ?? 1) + 1;
       const input = accepted
-        ? [{ type: "text", text: CONTINUE_ACCEPTED_TURN_TEXT, mentions: [], visibility: "agent-only" }]
+        ? [
+            {
+              type: "text",
+              text: CONTINUE_ACCEPTED_TURN_TEXT,
+              mentions: [],
+              visibility: "agent-only",
+            },
+          ]
         : data.input.map((block) => ({ ...block, visibility: "agent-only" }));
       const execution = { ...data.execution };
       const retryOf = { requestId: originalRequestId, attempt };
@@ -390,7 +508,8 @@ export class FakeCore {
       const future = args.sendAt !== undefined && args.sendAt > this.now;
       // dispatch-attempt.ts runs the hook pass before scheduling or host waits.
       const decision = await this.runHook(args.threadId, []);
-      if (decision.action === "reject") throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
+      if (decision.action === "reject")
+        throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
       const pluginWait = decision.action === "wait";
       if (future || !hostOnline || pluginWait) {
         const row: FakeQueueRow = {
@@ -405,14 +524,27 @@ export class FakeCore {
             : future
               ? { kind: "time" }
               : { kind: "host-offline", hostName: thread.environmentHostId ?? "" },
-          payload: { kind: "retry", retryOfTurnRequestId: originalRequestId, attempt, reason: args.reason ?? "" },
+          payload: {
+            kind: "retry",
+            retryOfTurnRequestId: originalRequestId,
+            attempt,
+            reason: args.reason ?? "",
+          },
           input,
           content: input,
           execution,
           retryOf,
         };
         this.queue.push(row);
-        return { ok: true, delivery: "queued", turnRequestId: originalRequestId, attempt, queuedMessageId: row.id, waitingOn: row.waitingOn, sendAt: row.sendAt };
+        return {
+          ok: true,
+          delivery: "queued",
+          turnRequestId: originalRequestId,
+          attempt,
+          queuedMessageId: row.id,
+          waitingOn: row.waitingOn,
+          sendAt: row.sendAt,
+        };
       }
       this.startTurn(args.threadId, { input, execution, retryOf });
       return { ok: true, delivery: "sent", turnRequestId: originalRequestId, attempt };
@@ -433,10 +565,21 @@ export class FakeCore {
       threads: {
         count: async (args: { status?: string } = {}) => ({
           total: [...this.threads.values()].filter(
-            (t) => t.archivedAt === null && t.deletedAt === null && (args.status === undefined || t.status === args.status),
+            (t) =>
+              t.archivedAt === null &&
+              t.deletedAt === null &&
+              (args.status === undefined || t.status === args.status),
           ).length,
         }),
-        list: async (args: { archived?: boolean; includeHidden?: boolean; limit?: number; offset?: number; parentThreadId?: string } = {}) => {
+        list: async (
+          args: {
+            archived?: boolean;
+            includeHidden?: boolean;
+            limit?: number;
+            offset?: number;
+            parentThreadId?: string;
+          } = {},
+        ) => {
           const rows = [...this.threads.values()].filter(
             (t) =>
               t.deletedAt === null &&
@@ -465,10 +608,19 @@ export class FakeCore {
           return { ok: true };
         },
         // core's send: hook pass, then dispatch, or a queued row behind a busy thread.
-        send: async (args: { threadId: string; input: Array<Record<string, unknown>>; mode: string; model?: string; reasoningLevel?: string; serviceTier?: string; permissionMode?: string }) => {
+        send: async (args: {
+          threadId: string;
+          input: Array<Record<string, unknown>>;
+          mode: string;
+          model?: string;
+          reasoningLevel?: string;
+          serviceTier?: string;
+          permissionMode?: string;
+        }) => {
           const thread = this.thread(args.threadId);
           const decision = await this.runHook(args.threadId, [], args.input);
-          if (decision.action === "reject") throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
+          if (decision.action === "reject")
+            throw new CoreHttpError(409, "dispatch_rejected", decision.message ?? "rejected");
           const execution: Execution = {
             model: args.model ?? "thread-default",
             reasoningLevel: args.reasoningLevel ?? "thread-default",
@@ -499,9 +651,21 @@ export class FakeCore {
           list: async ({ threadId }: { threadId: string }) =>
             this.thread(threadId).hasPendingInteraction ? [{ id: `int_${threadId}` }] : [],
         },
-        retry: async (args: { threadId: string; turnRequestId?: string; sendAt?: number; reason?: string }) => this.retry(args),
+        retry: async (args: {
+          threadId: string;
+          turnRequestId?: string;
+          sendAt?: number;
+          reason?: string;
+        }) => this.retry(args),
         events: {
-          list: async (args: { threadId: string; types?: string[]; order?: "asc" | "desc"; limit?: string; afterSeq?: string; beforeSeq?: string }) => {
+          list: async (args: {
+            threadId: string;
+            types?: string[];
+            order?: "asc" | "desc";
+            limit?: string;
+            afterSeq?: string;
+            beforeSeq?: string;
+          }) => {
             let rows = (this.events.get(args.threadId) ?? []).filter(
               (e) =>
                 (args.types === undefined || args.types.includes(e.type)) &&
@@ -514,20 +678,38 @@ export class FakeCore {
         },
         queue: {
           list: async (args: { threadId?: string } = {}) =>
-            this.queue.filter((row) => args.threadId === undefined || row.threadId === args.threadId),
+            this.queue.filter(
+              (row) => args.threadId === undefined || row.threadId === args.threadId,
+            ),
         },
         queuedMessages: {
-          delete: async ({ threadId, queuedMessageId }: { threadId: string; queuedMessageId: string }) => {
+          delete: async ({
+            threadId,
+            queuedMessageId,
+          }: {
+            threadId: string;
+            queuedMessageId: string;
+          }) => {
             const row = this.queue.find((r) => r.threadId === threadId && r.id === queuedMessageId);
             this.queue = this.queue.filter((r) => r !== row);
             if (row !== undefined) await this.onRowCancelled?.(row);
             return { ok: true };
           },
-          send: async ({ threadId, queuedMessageId }: { threadId: string; queuedMessageId: string }) => {
+          send: async ({
+            threadId,
+            queuedMessageId,
+          }: {
+            threadId: string;
+            queuedMessageId: string;
+          }) => {
             const row = this.queue.find((r) => r.threadId === threadId && r.id === queuedMessageId);
             if (row === undefined) throw new CoreHttpError(404, "not_found", queuedMessageId);
             this.queue = this.queue.filter((r) => r !== row);
-            this.startTurn(threadId, { input: row.input, execution: row.execution, retryOf: row.retryOf });
+            this.startTurn(threadId, {
+              input: row.input,
+              execution: row.execution,
+              retryOf: row.retryOf,
+            });
             return { ok: true };
           },
         },
@@ -561,7 +743,11 @@ export const FAILURES = {
   codexPooler: {
     detail:
       "unexpected status 502 Bad Gateway: Account Pooler could not reach ChatGPT., url: http://127.0.0.1:38886/api/v1/plugins/account-pool/http/v1/responses",
-    errorInfo: { category: "connection-failed", providerCode: "httpConnectionFailed", httpStatusCode: 502 },
+    errorInfo: {
+      category: "connection-failed",
+      providerCode: "httpConnectionFailed",
+      httpStatusCode: 502,
+    },
   },
   claudeOffline: {
     detail: "API Error: Connection error.",

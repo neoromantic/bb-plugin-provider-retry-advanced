@@ -1,9 +1,20 @@
 {
   "name": "bb-plugin-provider-retry-advanced",
   "version": "0.2.1",
-  "type": "module",
   "description": "BB's provider retry plus automatic resume after lost connectivity, with optional restart workflow recovery, stalled-turn watchdog and continuation follow-ups.",
+  "keywords": [
+    "bb-plugin"
+  ],
+  "homepage": "https://github.com/neoromantic/bb-plugin-provider-retry-advanced#readme",
+  "bugs": {
+    "url": "https://github.com/neoromantic/bb-plugin-provider-retry-advanced/issues"
+  },
   "license": "MIT",
+  "author": "Sergey Petrov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neoromantic/bb-plugin-provider-retry-advanced.git"
+  },
   "files": [
     "dist/",
     "server.ts",
@@ -17,32 +28,15 @@
     "CONTRIBUTING.md",
     "SECURITY.md"
   ],
-  "author": "Sergey Petrov",
-  "keywords": [
-    "bb-plugin"
-  ],
-  "homepage": "https://github.com/neoromantic/bb-plugin-provider-retry-advanced#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/neoromantic/bb-plugin-provider-retry-advanced.git"
-  },
-  "bugs": {
-    "url": "https://github.com/neoromantic/bb-plugin-provider-retry-advanced/issues"
-  },
-  "engines": {
-    "bb": ">=0.46.1",
-    "bbPluginSdk": ">=0.6.49"
-  },
-  "bb": {
-    "name": "Provider retry advanced",
-    "description": "Retries provider overloads and subscription limits like the bundled Provider retry, resumes turns that failed for lost connectivity, and, when turned on, asks Claude Code to resume workflows a BB restart killed, restarts stalled turns once and follows up resumed turns that only promised to continue.",
-    "branding": {
-      "icon": "ArrowReloadHorizontal"
-    },
-    "server": "./server.ts",
-    "skills": [
-      "skills"
-    ]
+  "type": "module",
+  "scripts": {
+    "check": "bun run format:check && bun run lint && tsc --noEmit && bun run check:knip",
+    "check:knip": "knip",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint --deny-warnings",
+    "test": "bun test",
+    "bundle": "bunx --package bb-app@0.48.0 bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
   },
   "dependencies": {
     "zod": "4.6.5"
@@ -58,13 +52,19 @@
     "oxlint": "1.94.0",
     "typescript": "7.0.2"
   },
-  "scripts": {
-    "check": "bun run format:check && bun run lint && tsc --noEmit && bun run check:knip",
-    "check:knip": "knip",
-    "format": "oxfmt",
-    "format:check": "oxfmt --check",
-    "lint": "oxlint --deny-warnings",
-    "test": "bun test",
-    "bundle": "bunx --package bb-app@0.48.0 bb plugin build . && bun -e \"const f = 'dist/server.js.map'; await Bun.write(f, (await Bun.file(f).text()).replaceAll(process.cwd() + '/', '../../'))\""
+  "engines": {
+    "bb": ">=0.46.1",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Provider retry advanced",
+    "description": "Retries provider overloads and subscription limits like the bundled Provider retry, resumes turns that failed for lost connectivity, and, when turned on, asks Claude Code to resume workflows a BB restart killed, restarts stalled turns once and follows up resumed turns that only promised to continue.",
+    "branding": {
+      "icon": "ArrowReloadHorizontal"
+    },
+    "server": "./server.ts",
+    "skills": [
+      "skills"
+    ]
   }
 }

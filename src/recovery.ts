@@ -185,7 +185,11 @@ export interface TransportRecovery {
   /** Any turn on the thread failed (core's `turn.failed`). */
   noteFailure(threadId: string): void;
   /** A queued retry row was removed before it dispatched. */
-  onRetryRowCancelled(entry: { id: string; threadId: string; payload: { kind: string; retryOfTurnRequestId?: string } }): Promise<void>;
+  onRetryRowCancelled(entry: {
+    id: string;
+    threadId: string;
+    payload: { kind: string; retryOfTurnRequestId?: string };
+  }): Promise<void>;
   /** The `message.dispatch` checkpoint: core asks before every attempt and every drain. */
   decideDispatch(context: MessageDispatchHookContext): DispatchDecision | Promise<DispatchDecision>;
 }
@@ -277,29 +281,65 @@ export function createTransportRecovery(
    * `resumeFromRunId`. A run whose id is unknown stays a candidate: names
    * prove nothing, so the message asks to check that task's run first.
    */
-  async function killedWorkflows(threadId: string, record: WorkflowRecord): Promise<KilledWorkflow[]> {
+  async function killedWorkflows(
+    threadId: string,
+    record: WorkflowRecord,
+  ): Promise<KilledWorkflow[]> {
     const killed: KilledWorkflow[] = [];
-    for (let before: number | undefined; ; ) {
-      const page = await listEvents(bb, { threadId, types: ["item/backgroundTask/completed"], beforeSeq: before, order: "desc", limit: LIST_PAGE_SIZE });
+    for (let before: number | undefined; ;) {
+      const page = await listEvents(bb, {
+        threadId,
+        types: ["item/backgroundTask/completed"],
+        beforeSeq: before,
+        order: "desc",
+        limit: LIST_PAGE_SIZE,
+      });
       const recent = page.filter((event) => (event.createdAt ?? 0) >= record.sinceAt);
       for (const event of recent) {
         const item = (event.data as { item: TaskItem }).item;
-        if (item.taskType !== "local_workflow" || item.taskStatus !== "stopped" || item.presentation !== undefined) continue;
+        if (
+          item.taskType !== "local_workflow" ||
+          item.taskStatus !== "stopped" ||
+          item.presentation !== undefined
+        )
+          continue;
         if (record.origins[item.id] === undefined) {
           // Where it came from, read once: its start, the Workflow call's result (which names the
           // run), and the request before its start (the chain it belongs to).
           const origin: WorkflowOrigin = { runId: null, chain: null };
-          for (let startBefore = event.seq; ; ) {
-            const starts = await listEvents(bb, { threadId, types: ["item/started"], beforeSeq: startBefore, order: "desc", limit: LIST_PAGE_SIZE });
-            const start = starts.find((started) => (started.data as { item: TaskItem }).item.id === item.id);
+          for (let startBefore = event.seq; ;) {
+            const starts = await listEvents(bb, {
+              threadId,
+              types: ["item/started"],
+              beforeSeq: startBefore,
+              order: "desc",
+              limit: LIST_PAGE_SIZE,
+            });
+            const start = starts.find(
+              (started) => (started.data as { item: TaskItem }).item.id === item.id,
+            );
             if (start !== undefined) {
-              const completed = await listEvents(bb, { threadId, types: ["item/completed"], afterSeq: start.seq, order: "asc", limit: 50 });
-              const call = completed.find((done) => (done.data as { item: TaskItem }).item.id === item.parentToolCallId);
+              const completed = await listEvents(bb, {
+                threadId,
+                types: ["item/completed"],
+                afterSeq: start.seq,
+                order: "asc",
+                limit: 50,
+              });
+              const call = completed.find(
+                (done) => (done.data as { item: TaskItem }).item.id === item.parentToolCallId,
+              );
               if (call !== undefined) {
                 const match = RUN_ID.exec(String((call.data as { item: TaskItem }).item.result));
                 if (match !== null) origin.runId = match[1]!;
               }
-              const [request] = await listEvents(bb, { threadId, types: ["client/turn/requested"], beforeSeq: start.seq, order: "desc", limit: 1 });
+              const [request] = await listEvents(bb, {
+                threadId,
+                types: ["client/turn/requested"],
+                beforeSeq: start.seq,
+                order: "desc",
+                limit: 1,
+              });
               if (request !== undefined) {
                 const parsed = parseRequest(request);
                 origin.chain = parsed.retryOfRequestId ?? parsed.requestId;
@@ -311,7 +351,13 @@ export function createTransportRecovery(
           }
           record.origins[item.id] = origin;
         }
-        killed.unshift({ seq: event.seq, id: item.id, task: String(item.familyId), name: String(item.workflowName), ...record.origins[item.id]! });
+        killed.unshift({
+          seq: event.seq,
+          id: item.id,
+          task: String(item.familyId),
+          name: String(item.workflowName),
+          ...record.origins[item.id]!,
+        });
       }
       if (page.length < LIST_PAGE_SIZE || recent.length < page.length) break;
       before = page.at(-1)!.seq;
@@ -319,16 +365,25 @@ export function createTransportRecovery(
     if (killed.length === 0) return killed;
     // Workflow calls after the first kill that resume a run by id.
     const resumes: Array<{ seq: number; runId: string }> = [];
-    for (let afterSeq = killed[0]!.seq; ; ) {
-      const page = await listEvents(bb, { threadId, types: ["item/started"], afterSeq, order: "asc", limit: LIST_PAGE_SIZE });
+    for (let afterSeq = killed[0]!.seq; ;) {
+      const page = await listEvents(bb, {
+        threadId,
+        types: ["item/started"],
+        afterSeq,
+        order: "asc",
+        limit: LIST_PAGE_SIZE,
+      });
       for (const event of page) {
         const item = (event.data as { item: TaskItem }).item;
-        if (item.tool === "Workflow" && item.arguments?.resumeFromRunId !== undefined) resumes.push({ seq: event.seq, runId: item.arguments.resumeFromRunId });
+        if (item.tool === "Workflow" && item.arguments?.resumeFromRunId !== undefined)
+          resumes.push({ seq: event.seq, runId: item.arguments.resumeFromRunId });
       }
       if (page.length < LIST_PAGE_SIZE) break;
       afterSeq = page.at(-1)!.seq;
     }
-    return killed.filter((run) => !resumes.some((resume) => resume.seq > run.seq && resume.runId === run.runId));
+    return killed.filter(
+      (run) => !resumes.some((resume) => resume.seq > run.seq && resume.runId === run.runId),
+    );
   }
 
   /**
@@ -341,7 +396,13 @@ export function createTransportRecovery(
     if (held.has(threadId)) return "held";
     const record = workflowsSeen.get(threadId);
     if (record === undefined) return "withdrawn";
-    if (record.asked.some((id) => record.origins[id]!.chain !== null && skipped.get(threadId) === record.origins[id]!.chain)) return "cancelled";
+    if (
+      record.asked.some(
+        (id) =>
+          record.origins[id]!.chain !== null && skipped.get(threadId) === record.origins[id]!.chain,
+      )
+    )
+      return "cancelled";
     return null;
   }
 
@@ -354,37 +415,70 @@ export function createTransportRecovery(
   async function checkWorkflow(
     thread: Pick<ThreadRow, "id" | "status" | "originPluginId">,
     record: WorkflowRecord,
-  ): Promise<{ state: "ready" | "waiting" | "skipped"; reason: string; labels?: string[]; seq?: number }> {
+  ): Promise<{
+    state: "ready" | "waiting" | "skipped";
+    reason: string;
+    labels?: string[];
+    seq?: number;
+  }> {
     const [latest] = await listEvents(bb, { threadId: thread.id, order: "desc", limit: 1 });
     const all = await killedWorkflows(thread.id, record);
     const killed = all.filter((run) => run.chain === null || skipped.get(thread.id) !== run.chain);
     if (all.length === 0) return { state: "skipped", reason: "workflow-finished-or-resumed" };
     if (killed.length === 0) return { state: "skipped", reason: "cancelled" };
     // Without the chain a cancel cannot be honoured: never send, keep the marker and say why.
-    if (killed.some((run) => run.chain === null)) return { state: "waiting", reason: "workflow-origin-unknown" };
+    if (killed.some((run) => run.chain === null))
+      return { state: "waiting", reason: "workflow-origin-unknown" };
     if (held.has(thread.id)) return { state: "skipped", reason: "held" };
-    if (thread.originPluginId === WORKFLOW_ENGINE_PLUGIN_ID) return { state: "skipped", reason: "workflow-engine-owned" };
-    const stops = await listEvents(bb, { threadId: thread.id, types: ["system/thread/interrupted"], order: "desc", limit: 50 });
-    if (stops.some((event) => (event.createdAt ?? 0) >= record.sinceAt && (event.data as { reason?: unknown }).reason === "manual-stop")) {
+    if (thread.originPluginId === WORKFLOW_ENGINE_PLUGIN_ID)
+      return { state: "skipped", reason: "workflow-engine-owned" };
+    const stops = await listEvents(bb, {
+      threadId: thread.id,
+      types: ["system/thread/interrupted"],
+      order: "desc",
+      limit: 50,
+    });
+    if (
+      stops.some(
+        (event) =>
+          (event.createdAt ?? 0) >= record.sinceAt &&
+          (event.data as { reason?: unknown }).reason === "manual-stop",
+      )
+    ) {
       return { state: "skipped", reason: "stopped-by-user" };
     }
     const after = await requestsAfter(bb, thread.id, killed[0]!.seq);
-    if (after.some((request) => request.text.startsWith(WORKFLOW_TAG))) return { state: "skipped", reason: "already-sent" };
-    if (after.some((r) => !isOwnMessage(r) && r.retryOfRequestId === null && (r.initiator === "user" || r.initiator === "agent"))) {
+    if (after.some((request) => request.text.startsWith(WORKFLOW_TAG)))
+      return { state: "skipped", reason: "already-sent" };
+    if (
+      after.some(
+        (r) =>
+          !isOwnMessage(r) &&
+          r.retryOfRequestId === null &&
+          (r.initiator === "user" || r.initiator === "agent"),
+      )
+    ) {
       return { state: "skipped", reason: "a-newer-message-took-over" };
     }
     // A failed turn is retried first (doScan); a busy or waiting thread is checked again later.
     if (thread.status !== "idle") return { state: "waiting", reason: `thread-${thread.status}` };
-    if (await hasPendingInteraction(bb, thread.id)) return { state: "waiting", reason: "pending-interaction" };
-    if (!armed) return { state: "waiting", reason: "not-armed (run: bb provider-retry-advanced arm)" };
-    if ((await openBackgroundWork(bb, thread.id)) > 0) return { state: "waiting", reason: "background-work-open" };
+    if (await hasPendingInteraction(bb, thread.id))
+      return { state: "waiting", reason: "pending-interaction" };
+    if (!armed)
+      return { state: "waiting", reason: "not-armed (run: bb provider-retry-advanced arm)" };
+    if ((await openBackgroundWork(bb, thread.id)) > 0)
+      return { state: "waiting", reason: "background-work-open" };
     const queued = await bb.sdk.threads.queue.list({ threadId: thread.id });
     record.asked = killed.map((run) => run.id);
-    if (queued.some(isWorkflowRow)) return { state: "waiting", reason: "message-queued", seq: latest!.seq };
+    if (queued.some(isWorkflowRow))
+      return { state: "waiting", reason: "message-queued", seq: latest!.seq };
     if (queued.length > 0) return { state: "waiting", reason: "other-message-queued" };
     const labels: string[] = [];
     for (const run of killed) {
-      if (run.runId === null) labels.push(`"${run.name}" (Claude Code task ${run.task}, run id unknown: check that task's run and status)`);
+      if (run.runId === null)
+        labels.push(
+          `"${run.name}" (Claude Code task ${run.task}, run id unknown: check that task's run and status)`,
+        );
       else labels.push(`"${run.name}" (run ${run.runId})`);
     }
     return { state: "ready", reason: "interrupted-workflow", labels, seq: latest!.seq };
@@ -418,7 +512,12 @@ export function createTransportRecovery(
   async function checkWorkflows(threads: ThreadRow[], report: ScanReport): Promise<void> {
     const rows = new Map(threads.map((thread) => [thread.id, thread]));
     for (const thread of threads) {
-      if (thread.activity === undefined || thread.activity.activeWorkflowCount === 0 || workflowsSeen.has(thread.id)) continue;
+      if (
+        thread.activity === undefined ||
+        thread.activity.activeWorkflowCount === 0 ||
+        workflowsSeen.has(thread.id)
+      )
+        continue;
       // The scan's start bounds the close: a workflow closed after this list read is still found.
       const record: WorkflowRecord = { sinceAt: report.at, origins: {}, asked: [] };
       workflowsSeen.set(thread.id, record);
@@ -426,8 +525,19 @@ export function createTransportRecovery(
     }
     for (const [threadId, record] of workflowsSeen) {
       const thread = rows.get(threadId);
-      if (thread !== undefined && thread.activity !== undefined && thread.activity.activeWorkflowCount > 0) continue;
-      const entry: ScanEntry = { threadId, requestId: null, state: "skipped", reason: "workflow:thread-archived-or-deleted", openBackgroundTasks: 0 };
+      if (
+        thread !== undefined &&
+        thread.activity !== undefined &&
+        thread.activity.activeWorkflowCount > 0
+      )
+        continue;
+      const entry: ScanEntry = {
+        threadId,
+        requestId: null,
+        state: "skipped",
+        reason: "workflow:thread-archived-or-deleted",
+        openBackgroundTasks: 0,
+      };
       report.entries.push(entry);
       if (thread === undefined) {
         await forgetWorkflow(threadId);
@@ -451,14 +561,22 @@ export function createTransportRecovery(
         // The hook lets this send through once, if nothing happened after the checks;
         // the marker stays until a scan sees the message dispatched.
         workflowReady.set(threadId, decision.seq!);
-        await sendAgentOnly(bb, { threadId, text: workflowText(decision.labels!), execution: request!.execution });
+        await sendAgentOnly(bb, {
+          threadId,
+          text: workflowText(decision.labels!),
+          execution: request!.execution,
+        });
         entry.state = "resumed";
-        bb.log.info(`Interrupted workflow: ${threadId} lost ${decision.labels!.length} Claude Code workflow(s) to a restart; sent one message to resume.`);
+        bb.log.info(
+          `Interrupted workflow: ${threadId} lost ${decision.labels!.length} Claude Code workflow(s) to a restart; sent one message to resume.`,
+        );
       } catch (error) {
         workflowReady.delete(threadId);
         entry.state = "waiting";
         entry.reason = `workflow:send-failed`;
-        bb.log.warn(`Could not ask ${threadId} to resume its interrupted workflow: ${String(error)}`);
+        bb.log.warn(
+          `Could not ask ${threadId} to resume its interrupted workflow: ${String(error)}`,
+        );
       }
     }
   }
@@ -488,7 +606,8 @@ export function createTransportRecovery(
       if ((generation.get(thread.id) ?? 0) !== started) continue; // a newer failure landed mid-read
       if (read === null) return null;
       currentChain.set(thread.id, read.originalRequestId);
-      if (read.failure.kind !== "other" || read.failure.reason !== "incomplete") failedTurns.set(thread.id, read);
+      if (read.failure.kind !== "other" || read.failure.reason !== "incomplete")
+        failedTurns.set(thread.id, read);
       return read;
     }
     return null; // still changing: stay unknown, the next read or scan decides
@@ -514,14 +633,24 @@ export function createTransportRecovery(
     });
     if (request === undefined) return null;
     const latest = (type: string, beforeSeq?: number) =>
-      firstEvent({ threadId: thread.id, types: [type], afterSeq: request.seq, ...(beforeSeq === undefined ? {} : { beforeSeq }), order: "desc" });
+      firstEvent({
+        threadId: thread.id,
+        types: [type],
+        afterSeq: request.seq,
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        order: "desc",
+      });
     const completion = await latest("turn/completed");
     const interrupted = await latest("system/thread/interrupted");
     const terminal = [completion, interrupted]
       .filter((event): event is EventLike => event !== undefined)
       .sort((a, b) => b.seq - a.seq)[0];
     const cached = failedTurns.get(thread.id);
-    if (cached !== undefined && cached.requestSeq === request.seq && cached.terminalSeq === (terminal?.seq ?? null)) {
+    if (
+      cached !== undefined &&
+      cached.requestSeq === request.seq &&
+      cached.terminalSeq === (terminal?.seq ?? null)
+    ) {
       return cached;
     }
     const data = request.data as { requestId: string; retryOfRequestId?: string };
@@ -531,12 +660,25 @@ export function createTransportRecovery(
       requestId: data.requestId,
       originalRequestId: data.retryOfRequestId ?? data.requestId,
     };
-    if (terminal === undefined) return { ...base, failure: { kind: "other", reason: "incomplete" } };
-    if (terminal.type === "turn/completed" && (terminal.data as { status?: unknown }).status !== "failed") {
-      return { ...base, failure: { kind: "other", reason: `latest-turn-${String((terminal.data as { status?: unknown }).status)}` } };
+    if (terminal === undefined)
+      return { ...base, failure: { kind: "other", reason: "incomplete" } };
+    if (
+      terminal.type === "turn/completed" &&
+      (terminal.data as { status?: unknown }).status !== "failed"
+    ) {
+      return {
+        ...base,
+        failure: {
+          kind: "other",
+          reason: `latest-turn-${String((terminal.data as { status?: unknown }).status)}`,
+        },
+      };
     }
     if (terminal.type === "system/thread/interrupted") {
-      return { ...base, failure: classifyFailedTurn({ providerId: thread.providerId, events: [terminal] }) };
+      return {
+        ...base,
+        failure: classifyFailedTurn({ providerId: thread.providerId, events: [terminal] }),
+      };
     }
     const previous = await latest("turn/completed", terminal.seq);
     const decisive = await firstEvent({
@@ -600,7 +742,8 @@ export function createTransportRecovery(
       } finally {
         refreshing.delete(threadId);
         // A failure that arrived while this read ran skipped its own refresh.
-        if ((generation.get(threadId) ?? 0) !== started && !currentChain.has(threadId)) refresh(threadId);
+        if ((generation.get(threadId) ?? 0) !== started && !currentChain.has(threadId))
+          refresh(threadId);
       }
     })();
   }
@@ -610,7 +753,10 @@ export function createTransportRecovery(
     for (const row of rows) {
       selfDeleting.add(row.id);
       try {
-        await bb.sdk.threads.queuedMessages.delete({ threadId: row.threadId, queuedMessageId: row.id });
+        await bb.sdk.threads.queuedMessages.delete({
+          threadId: row.threadId,
+          queuedMessageId: row.id,
+        });
         removed += 1;
         bb.log.info(`Withdrew automatic retry ${row.id} on ${row.threadId}: ${why}.`);
       } catch (error) {
@@ -628,9 +774,12 @@ export function createTransportRecovery(
     const rows = (await bb.sdk.threads.queue.list({ threadId })).filter(
       (row) =>
         row.state !== "claimed" &&
-        ((isOwnRetryRow(row) && (chain === undefined || row.payload.retryOfTurnRequestId === chain)) ||
+        ((isOwnRetryRow(row) &&
+          (chain === undefined || row.payload.retryOfTurnRequestId === chain)) ||
           (isWorkflowRow(row) &&
-            (chain === undefined || (record !== undefined && record.asked.some((id) => record.origins[id]!.chain === chain))))),
+            (chain === undefined ||
+              (record !== undefined &&
+                record.asked.some((id) => record.origins[id]!.chain === chain))))),
     );
     if (rows.length > 0) await deleteOwnRows(rows, why);
   }
@@ -646,10 +795,16 @@ export function createTransportRecovery(
     let removed = 0;
     for (const row of rows) {
       if (!isOwnRetryRow(row) || row.state === "claimed") continue;
-      const thread = (await bb.sdk.threads.get({ threadId: row.threadId })) as unknown as ThreadState;
+      const thread = (await bb.sdk.threads.get({
+        threadId: row.threadId,
+      })) as unknown as ThreadState;
       if (thread.archivedAt !== null || thread.deletedAt !== null) continue; // core drops these rows
       if (thread.status === "error") await loadFailedTurn(thread);
-      const why = ineligible({ threadId: row.threadId, status: thread.status, chain: row.payload.retryOfTurnRequestId });
+      const why = ineligible({
+        threadId: row.threadId,
+        status: thread.status,
+        chain: row.payload.retryOfTurnRequestId,
+      });
       if (why !== null && why !== "unknown") removed += await deleteOwnRows([row], why);
     }
     return removed;
@@ -671,7 +826,8 @@ export function createTransportRecovery(
     const queuedBefore = await bb.sdk.threads.queue.list({});
     // Before arm, rows are kept as they are (the hook holds them); after, stale ones go.
     if (armed) report.staleRowsRemoved = await removeStaleOwnRows(queuedBefore);
-    const queued = report.staleRowsRemoved === 0 ? queuedBefore : await bb.sdk.threads.queue.list({});
+    const queued =
+      report.staleRowsRemoved === 0 ? queuedBefore : await bb.sdk.threads.queue.list({});
 
     const listed = await listThreads();
     if (options.workflowRecovery()) await checkWorkflows(listed, report);
@@ -767,7 +923,8 @@ export function createTransportRecovery(
     const current = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
     if (current.archivedAt !== null || current.deletedAt !== null) return "state-changed:archived";
     if (current.status !== "error") return `state-changed:${current.status}`;
-    if ((await bb.sdk.threads.interactions.list({ threadId })).length > 0) return "pending-interaction";
+    if ((await bb.sdk.threads.interactions.list({ threadId })).length > 0)
+      return "pending-interaction";
     if (!armed) return "not-armed";
     const why = ineligible({ threadId, status: current.status, chain: failed.originalRequestId });
     if (why !== null) return why;
@@ -792,7 +949,10 @@ export function createTransportRecovery(
 
   async function setSkip(threadId: string, chain: string): Promise<void> {
     skipped.set(threadId, chain);
-    await bb.storage.kv.set(`skip:${threadId}`, { originalRequestId: chain, at: now() } satisfies SkipRecord);
+    await bb.storage.kv.set(`skip:${threadId}`, {
+      originalRequestId: chain,
+      at: now(),
+    } satisfies SkipRecord);
   }
 
   const recovery: TransportRecovery = {
@@ -863,44 +1023,78 @@ export function createTransportRecovery(
       if (selfDeleting.has(entry.id)) return;
       // Deleting the queued interrupted-workflow message is a decision about those workflows.
       if (isWorkflowRow(entry as QueueRow)) return forgetWorkflow(entry.threadId);
-      if (entry.payload.kind !== "retry" || entry.payload.retryOfTurnRequestId === undefined) return;
+      if (entry.payload.kind !== "retry" || entry.payload.retryOfTurnRequestId === undefined)
+        return;
       await setSkip(entry.threadId, entry.payload.retryOfTurnRequestId);
     },
     decideDispatch(context) {
       const threadId = context.thread.id;
       // This plugin's interrupted-workflow message: inline right after its checks, or queued.
       const workflowRows = context.queuedMessages.filter(isWorkflowRow);
-      if (workflowRows.length > 0 || (context.queuedMessages.length === 0 && context.input.text.startsWith(WORKFLOW_TAG))) {
+      if (
+        workflowRows.length > 0 ||
+        (context.queuedMessages.length === 0 && context.input.text.startsWith(WORKFLOW_TAG))
+      ) {
         const blocked = workflowBlocked(threadId);
         const checkedAt = workflowReady.get(threadId);
         workflowReady.delete(threadId);
         if (workflowRows.length === 0) {
           // Inline: only the send a scan has just checked, to a thread that is still idle.
-          if (blocked !== null) return { action: "reject", message: `Interrupted-workflow message withdrawn: ${blocked}.` };
-          if (context.thread.status !== "idle") return { action: "reject", message: `Interrupted-workflow message withdrawn: thread-${context.thread.status}.` };
-          if (checkedAt === undefined) return { action: "reject", message: "Interrupted-workflow message withdrawn: not-checked." };
+          if (blocked !== null)
+            return {
+              action: "reject",
+              message: `Interrupted-workflow message withdrawn: ${blocked}.`,
+            };
+          if (context.thread.status !== "idle")
+            return {
+              action: "reject",
+              message: `Interrupted-workflow message withdrawn: thread-${context.thread.status}.`,
+            };
+          if (checkedAt === undefined)
+            return {
+              action: "reject",
+              message: "Interrupted-workflow message withdrawn: not-checked.",
+            };
           // One indexed read (core allows async decisions within its box): anything on the thread
           // after the checks (a turn, a request, a stop, a workflow starting) refuses the send.
-          return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(([next]) =>
-            next === undefined ? { action: "proceed" } : { action: "reject", message: "Interrupted-workflow message withdrawn: the thread moved on." },
+          return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(
+            ([next]) =>
+              next === undefined
+                ? { action: "proceed" }
+                : {
+                    action: "reject",
+                    message: "Interrupted-workflow message withdrawn: the thread moved on.",
+                  },
           );
         }
         if (blocked !== null) {
           setTimeout(() => {
-            void deleteOwnRows(workflowRows, blocked).then(() => bb.experimental_hooks.recheck("message.dispatch"));
+            void deleteOwnRows(workflowRows, blocked).then(() =>
+              bb.experimental_hooks.recheck("message.dispatch"),
+            );
           }, 0);
           return { action: "wait", reason: `Interrupted-workflow message withdrawn: ${blocked}` };
         }
         // Queued: admitted only on checks run against the current state; otherwise check again.
         if (checkedAt === undefined) {
           refreshWorkflow(threadId);
-          return { action: "wait", reason: "Checking the interrupted workflow", sendAt: now() + NOT_READY_WAIT_MS };
+          return {
+            action: "wait",
+            reason: "Checking the interrupted workflow",
+            sendAt: now() + NOT_READY_WAIT_MS,
+          };
         }
-        return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(([next]): DispatchDecision => {
-          if (next === undefined) return { action: "proceed" };
-          refreshWorkflow(threadId);
-          return { action: "wait", reason: "Checking the interrupted workflow", sendAt: now() + NOT_READY_WAIT_MS };
-        });
+        return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(
+          ([next]): DispatchDecision => {
+            if (next === undefined) return { action: "proceed" };
+            refreshWorkflow(threadId);
+            return {
+              action: "wait",
+              reason: "Checking the interrupted workflow",
+              sendAt: now() + NOT_READY_WAIT_MS,
+            };
+          },
+        );
       }
       const own = context.queuedMessages.filter(isOwnRetryRow);
       if (own.length === 0) {
@@ -917,11 +1111,19 @@ export function createTransportRecovery(
       if (!armed) return { action: "wait", reason: "Waiting for bb provider-retry-advanced arm" };
       const verdicts = own.map((row) => ({
         row,
-        why: ineligible({ threadId, status: context.thread.status, chain: row.payload.retryOfTurnRequestId }),
+        why: ineligible({
+          threadId,
+          status: context.thread.status,
+          chain: row.payload.retryOfTurnRequestId,
+        }),
       }));
       if (verdicts.some((v) => v.why === "unknown")) {
         refresh(threadId);
-        return { action: "wait", reason: "Checking the failed turn", sendAt: now() + NOT_READY_WAIT_MS };
+        return {
+          action: "wait",
+          reason: "Checking the failed turn",
+          sendAt: now() + NOT_READY_WAIT_MS,
+        };
       }
       const blocked = verdicts.filter((v) => v.why !== null).map((v) => v.row);
       if (blocked.length === 0) return { action: "proceed" };
@@ -929,7 +1131,9 @@ export function createTransportRecovery(
       // Hold the attempt, then take the rows off the queue outside the hook's
       // lock; anything else grouped with them is re-attempted afterwards.
       setTimeout(() => {
-        void deleteOwnRows(blocked, why ?? "withdrawn").then(() => bb.experimental_hooks.recheck("message.dispatch"));
+        void deleteOwnRows(blocked, why ?? "withdrawn").then(() =>
+          bb.experimental_hooks.recheck("message.dispatch"),
+        );
       }, 0);
       return { action: "wait", reason: `Automatic retry withdrawn: ${why}` };
     },

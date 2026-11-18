@@ -4,10 +4,7 @@
 // scan that probes the provider path and asks core to retry natively; a
 // stalled-turn watchdog and two follow-ups (continuation check, unfinished
 // request) keep stalled work moving without a person nudging it.
-import {
-  readRetryDiagnostic,
-  retryDiagnosticContract,
-} from "./src/diagnostics.js";
+import { readRetryDiagnostic, retryDiagnosticContract } from "./src/diagnostics.js";
 import {
   retryAvailabilityMethod,
   retryAvailabilitySchema,
@@ -18,16 +15,18 @@ import { registerProviderRetryCli } from "./src/cli.js";
 import { createFollowUps } from "./src/follow-ups.js";
 import { createProbe, type ProbeFn } from "./src/probe.js";
 import { createTransportRecovery, runRecoveryLoop, sleep } from "./src/recovery.js";
-import {
-  DEFAULT_MAXIMUM_WAIT_MS,
-  decideRetry,
-  isRateLimitFailure,
-} from "./src/retry-policy.js";
+import { DEFAULT_MAXIMUM_WAIT_MS, decideRetry, isRateLimitFailure } from "./src/retry-policy.js";
 import { createStallWatchdog, runWatchdogLoop } from "./src/watchdog.js";
 
 const MAXIMUM_WAIT_OPTIONS = ["6 hours", "24 hours", "No limit"] as const;
 
-const STALL_WATCHDOG_OPTIONS = ["Off", "15 minutes", "20 minutes", "30 minutes", "60 minutes"] as const;
+const STALL_WATCHDOG_OPTIONS = [
+  "Off",
+  "15 minutes",
+  "20 minutes",
+  "30 minutes",
+  "60 minutes",
+] as const;
 
 function stallLimitMs(value: string): number | null {
   if (value === "Off") return null;
@@ -47,9 +46,7 @@ function maximumWaitMs(value: string): number | null {
     case "No limit":
       return null;
     default:
-      throw new Error(
-        `Unsupported maximum provider retry wait: ${String(value)}`,
-      );
+      throw new Error(`Unsupported maximum provider retry wait: ${String(value)}`);
   }
 }
 
@@ -99,7 +96,7 @@ export function createPlugin(options: PluginOptions = {}) {
         type: "boolean",
         label: "Continuation check",
         description:
-          "After an automatic retry or restart, if the turn ends on a short \"I'll continue\" after at most a few tool calls, send one more continue.",
+          'After an automatic retry or restart, if the turn ends on a short "I\'ll continue" after at most a few tool calls, send one more continue.',
         default: false,
       },
       unfinishedFollowUp: {
@@ -160,9 +157,11 @@ export function createPlugin(options: PluginOptions = {}) {
     await followUps.init();
     bb.events.on("turn.failed", async (event) => {
       recovery.noteFailure(event.threadId);
-      await followUps.noteFailure(event).catch((error: unknown) =>
-        bb.log.warn(`Could not record the failed request on ${event.threadId}: ${String(error)}`),
-      );
+      await followUps
+        .noteFailure(event)
+        .catch((error: unknown) =>
+          bb.log.warn(`Could not record the failed request on ${event.threadId}: ${String(error)}`),
+        );
       if (event.errorInfo?.category !== "overloaded" && !isRateLimitFailure(event)) {
         return;
       }
@@ -204,9 +203,7 @@ export function createPlugin(options: PluginOptions = {}) {
               break;
             }
           } catch (error) {
-            bb.log.warn(
-              `Retry availability failed for ${event.threadId}: ${String(error)}`,
-            );
+            bb.log.warn(`Retry availability failed for ${event.threadId}: ${String(error)}`);
             availability = { kind: "unavailable", reason: "source-unavailable" };
           }
         }
@@ -246,21 +243,19 @@ export function createPlugin(options: PluginOptions = {}) {
 
     // Core asks before every attempt and every queued drain; this is where a
     // hold, cancel, stop or newer failure stops an already queued retry.
-    bb.experimental_hooks.on("message.dispatch", (context) =>
-      recovery.decideDispatch(context),
-    );
+    bb.experimental_hooks.on("message.dispatch", (context) => recovery.decideDispatch(context));
 
     // A retry row the user deleted is a decision about that failure.
-    bb.events.on("message.cancelled", ({ entry }) =>
-      recovery.onRetryRowCancelled(entry),
-    );
+    bb.events.on("message.cancelled", ({ entry }) => recovery.onRetryRowCancelled(entry));
 
     // A thread became idle: maybe a resumed turn only promised to continue,
     // or a failed request was superseded and never retried.
     bb.events.on("thread.idle", async ({ thread, lastAssistantText }) => {
       await followUps
         .onIdle(thread as never, lastAssistantText)
-        .catch((error: unknown) => bb.log.warn(`Follow-up check failed for ${thread.id}: ${String(error)}`));
+        .catch((error: unknown) =>
+          bb.log.warn(`Follow-up check failed for ${thread.id}: ${String(error)}`),
+        );
     });
 
     bb.background.service("connectivity-recovery", {

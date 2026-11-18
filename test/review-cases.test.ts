@@ -10,7 +10,8 @@ import { CODEX_HIGH, FAILURES, FakeCore } from "./fake-core.js";
 
 function wire(core: FakeCore, host: ReturnType<typeof createFakePluginHost>) {
   core.hook = (context) => host.harness.registrations.hooks["message.dispatch"]!(context as never);
-  core.onRowCancelled = (row) => host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
+  core.onRowCancelled = (row) =>
+    host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
 }
 
 async function queuedFailure() {
@@ -19,8 +20,14 @@ async function queuedFailure() {
   core.startTurn("review-thread", { input: [], execution: CODEX_HIGH });
   await core.setHostOnline("review-host", false);
   core.interruptTurn("review-thread", "host-daemon-restarted", "host-connection-lost");
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
-  await createPlugin({ now: () => core.now, probe: async () => ({ reachable: true, detail: "HTTP 405" }) })(host.bb);
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
+  await createPlugin({
+    now: () => core.now,
+    probe: async () => ({ reachable: true, detail: "HTTP 405" }),
+  })(host.bb);
   wire(core, host);
   await host.harness.runCli(["arm"]);
   expect(core.queue).toHaveLength(1);
@@ -40,8 +47,13 @@ it("removes an old retry when a different turn has already failed", async () => 
   core.startTurn("review-thread", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-thread", FAILURES.unauthorized);
   await host.harness.behavior.emitThreadEvent("turn.failed", {
-    threadId: "review-thread", requestId: core.lastRequest("review-thread")!.data.requestId as string, turnId: null,
-    errorInfo: FAILURES.unauthorized.errorInfo, inputAccepted: true, rateLimits: null, attemptNumber: 1,
+    threadId: "review-thread",
+    requestId: core.lastRequest("review-thread")!.data.requestId as string,
+    turnId: null,
+    errorInfo: FAILURES.unauthorized.errorInfo,
+    inputAccepted: true,
+    rateLimits: null,
+    attemptNumber: 1,
   });
   // Even before any scan, a drain must not run the superseded retry.
   core.now += 1;
@@ -56,10 +68,17 @@ it("classifies the final error even after 500 earlier provider errors", async ()
   const core = new FakeCore();
   core.addThread({ id: "review-thread", providerId: "codex" });
   core.startTurn("review-thread", { input: [], execution: CODEX_HIGH });
-  for (let i = 0; i < 500; i++) core.append("review-thread", "provider/error", FAILURES.codexPooler);
+  for (let i = 0; i < 500; i++)
+    core.append("review-thread", "provider/error", FAILURES.codexPooler);
   core.failTurn("review-thread", FAILURES.unauthorized);
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
-  await createPlugin({ now: () => core.now, probe: async () => ({ reachable: true, detail: "HTTP 405" }) })(host.bb);
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
+  await createPlugin({
+    now: () => core.now,
+    probe: async () => ({ reachable: true, detail: "HTTP 405" }),
+  })(host.bb);
   wire(core, host);
   await host.harness.runCli(["arm"]);
   expect(host.harness.inspection.sdk.callsTo("threads.retry")).toHaveLength(0);
@@ -79,11 +98,19 @@ it("fresh install observes overload failures until arm as promised", async () =>
   core.addThread({ id: "review-thread", providerId: "codex" });
   const requestId = core.startTurn("review-thread", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-thread", FAILURES.overloaded);
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
   await createPlugin({ now: () => core.now })(host.bb);
   await host.harness.behavior.emitThreadEvent("turn.failed", {
-    threadId: "review-thread", requestId, turnId: null, errorInfo: FAILURES.overloaded.errorInfo,
-    inputAccepted: true, rateLimits: null, attemptNumber: 1,
+    threadId: "review-thread",
+    requestId,
+    turnId: null,
+    errorInfo: FAILURES.overloaded.errorInfo,
+    inputAccepted: true,
+    rateLimits: null,
+    attemptNumber: 1,
   });
   expect(host.harness.inspection.sdk.callsTo("threads.retry")).toHaveLength(0);
 });
@@ -95,21 +122,29 @@ it("honours a hold placed while a stock availability RPC is pending", async () =
   core.failTurn("review-thread", FAILURES.rateLimit);
   let host: ReturnType<typeof createFakePluginHost>;
   const sdk = core.sdk();
-  host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: {
-    ...sdk,
-    plugins: {
-      experimental_discoverRpc: async () => [{ pluginId: "review-pool" }],
-      callRpc: async () => {
-        await host.harness.runCli(["hold", "review-thread"]);
-        return { kind: "ready" };
+  host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: {
+      ...sdk,
+      plugins: {
+        experimental_discoverRpc: async () => [{ pluginId: "review-pool" }],
+        callRpc: async () => {
+          await host.harness.runCli(["hold", "review-thread"]);
+          return { kind: "ready" };
+        },
       },
-    },
-  } as never });
+    } as never,
+  });
   await createPlugin({ now: () => core.now })(host.bb);
   await host.harness.runCli(["arm"]);
   await host.harness.behavior.emitThreadEvent("turn.failed", {
-    threadId: "review-thread", requestId, turnId: null, errorInfo: FAILURES.rateLimit.errorInfo,
-    inputAccepted: true, rateLimits: null, attemptNumber: 1,
+    threadId: "review-thread",
+    requestId,
+    turnId: null,
+    errorInfo: FAILURES.rateLimit.errorInfo,
+    inputAccepted: true,
+    rateLimits: null,
+    attemptNumber: 1,
   });
   expect(host.harness.inspection.sdk.callsTo("threads.retry")).toHaveLength(0);
 });
@@ -123,7 +158,10 @@ it("does not dispatch a superseded row claimed during the first scan after reloa
   await core.setHostOnline("review-host", false);
   core.interruptTurn("review-reload", "host-daemon-restarted", "host-connection-lost");
   const factory = createPlugin({ probe: async () => ({ reachable: true, detail: "HTTP 405" }) });
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
   await factory(host.bb);
   core.hook = (c) => host.harness.registrations.hooks["message.dispatch"]!(c as never);
   await host.harness.runCli(["arm"]);
@@ -155,17 +193,28 @@ it("does not require a later millisecond to identify a superseding failed reques
   core.startTurn("review-clock", { input: [], execution: CODEX_HIGH });
   await core.setHostOnline("review-host", false);
   core.interruptTurn("review-clock", "host-daemon-restarted", "host-connection-lost");
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
   // The API row and the event handler can have the same Date.now() value;
   // request sequence/identity still distinguishes the new failed request.
-  await createPlugin({ now: () => core.now, probe: async () => ({ reachable: true, detail: "HTTP 405" }) })(host.bb);
+  await createPlugin({
+    now: () => core.now,
+    probe: async () => ({ reachable: true, detail: "HTTP 405" }),
+  })(host.bb);
   core.hook = (c) => host.harness.registrations.hooks["message.dispatch"]!(c as never);
   await host.harness.runCli(["arm"]);
   core.startTurn("review-clock", { input: [], execution: CODEX_HIGH });
   core.failTurn("review-clock", FAILURES.unauthorized);
   await host.harness.behavior.emitThreadEvent("turn.failed", {
-    threadId: "review-clock", requestId: core.lastRequest("review-clock")!.data.requestId as string,
-    turnId: null, errorInfo: FAILURES.unauthorized.errorInfo, inputAccepted: true, rateLimits: null, attemptNumber: 1,
+    threadId: "review-clock",
+    requestId: core.lastRequest("review-clock")!.data.requestId as string,
+    turnId: null,
+    errorInfo: FAILURES.unauthorized.errorInfo,
+    inputAccepted: true,
+    rateLimits: null,
+    attemptNumber: 1,
   });
   await core.setHostOnline("review-host", true);
   expect(core.thread("review-clock").status).toBe("error");
@@ -178,9 +227,16 @@ it("unarmed installation does not dispatch an existing automatic retry after the
   core.failTurn("review-unarmed", FAILURES.overloaded);
   // An ordinary durable row can survive disabling/removing the old recovery
   // owner, and uses exactly the stock reason that this plugin adopts as own.
-  await core.retry({ threadId: "review-unarmed", turnRequestId: requestId,
-    sendAt: core.now + 1000, reason: "Provider overloaded" });
-  const host = createFakePluginHost({ pluginId: "provider-retry-advanced", sdk: core.sdk() as never });
+  await core.retry({
+    threadId: "review-unarmed",
+    turnRequestId: requestId,
+    sendAt: core.now + 1000,
+    reason: "Provider overloaded",
+  });
+  const host = createFakePluginHost({
+    pluginId: "provider-retry-advanced",
+    sdk: core.sdk() as never,
+  });
   await createPlugin({ now: () => core.now })(host.bb);
   core.hook = (c) => host.harness.registrations.hooks["message.dispatch"]!(c as never);
   const scan = await host.harness.runCli(["scan", "--json"]);

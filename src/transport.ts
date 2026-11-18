@@ -6,9 +6,7 @@
  * - `host`: the server lost the thread's machine; core queues the retry with a
  *   native `host-offline` wait until that machine is connected again.
  */
-export type TransportRoute =
-  | { kind: "provider"; target: ProbeTargetId }
-  | { kind: "host" };
+export type TransportRoute = { kind: "provider"; target: ProbeTargetId } | { kind: "host" };
 
 export type ProbeTargetId = "anthropic" | "chatgpt";
 
@@ -34,21 +32,14 @@ export function probeTargetForProvider(providerId: string): ProbeTargetId | null
 }
 
 /** Categories a provider reports for a lost or refused connection. */
-const TRANSPORT_CATEGORIES = new Set<string>([
-  "connection-failed",
-  "stream-disconnected",
-]);
+const TRANSPORT_CATEGORIES = new Set<string>(["connection-failed", "stream-disconnected"]);
 
 /**
  * Categories whose structured class is not about reachability, whatever the
  * message says. A plain 5xx stays here unless its text names a network or
  * gateway reachability failure (see NETWORK_SIGNATURE).
  */
-const AMBIGUOUS_CATEGORIES = new Set<string>([
-  "internal",
-  "unknown",
-  "none",
-]);
+const AMBIGUOUS_CATEGORIES = new Set<string>(["internal", "unknown", "none"]);
 
 /**
  * Text that only a reachability failure produces: Account Pooler's own 502
@@ -114,8 +105,7 @@ export function classifyFailedTurn(args: {
   );
   const errors = args.events.filter(
     (event) =>
-      event.type === "provider/error" &&
-      (completion === undefined || event.seq < completion.seq),
+      event.type === "provider/error" && (completion === undefined || event.seq < completion.seq),
   );
   const decisive = errors.at(-1);
   if (decisive === undefined) return { kind: "other", reason: "no-provider-error" };
