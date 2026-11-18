@@ -396,7 +396,7 @@ export class FakeCore {
 
   /** core's queue drain: each eligible row runs the hook pass, then dispatches. */
   async drain(): Promise<void> {
-    for (const row of [...this.queue]) {
+    for (const row of this.queue.slice()) {
       const thread = this.thread(row.threadId);
       if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
       if (
