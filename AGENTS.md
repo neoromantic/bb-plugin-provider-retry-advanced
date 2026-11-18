@@ -2,6 +2,7 @@
 
 <!-- devkit:agents v1 -->
 <!-- managed by devkit v1: edit in https://github.com/neoromantic/devkit/blob/main/agents/AGENTS.shared.md -->
+
 ## Shared rules (devkit)
 
 These rules apply to people and coding agents in every repo that uses
@@ -20,6 +21,7 @@ Where they conflict, the project section wins.
 Use the project section's native commands for checks, offline tests and builds:
 
 - Bun: `bun run <script>` (`check`, or `lint` and `typecheck`; `test`, `test:e2e`, `build`).
+  `bun run format` formats; `check` fails on unformatted code and on lint errors.
 - Python: the documented `uv run` / `uvx` commands, such as pytest, unittest and ruff.
 - Go: the documented `go` commands from `go.mod`. Do not add Bun wrappers for Python or Go.
 - Use Bun, uv or Go modules for installs. Use npm only for `npm publish` and `npm view`.
@@ -30,6 +32,9 @@ Use the project section's native commands for checks, offline tests and builds:
 - README, docs and affected demos change with the behaviour they describe; follow the
   [product content standard](https://github.com/neoromantic/devkit/blob/main/docs/standards/product-content.md).
 - No new warnings, no commented-out code, no stray debug output.
+- JS and TS follow the [lint and format standard](https://github.com/neoromantic/devkit/blob/main/docs/standards/lint-format.md):
+  no prose comments (rationale goes in the PR), tests beside their code, no mocks of the code
+  under test, no fixed sleeps or retries. Fix the code; exceptions go in `.oxlintrc.json`.
 
 ### Commits and releases
 
@@ -46,8 +51,10 @@ Use the project section's native commands for checks, offline tests and builds:
 - Don't add agent hooks that rewrite tracked files.
 - `AGENTS.md` is the canonical instruction file. `CLAUDE.md` contains only `@AGENTS.md`.
 - Files marked "managed by devkit" (this block, `SECURITY.md`, `CONTRIBUTING.md`, the PR
-  template, `.gitleaks.toml`, `.github/zizmor.yml`, `renovate.json`, `lefthook.yml` and the
-  CI stub) are synced from devkit. Change them there, not here.
+  template, `.gitleaks.toml`, `.github/zizmor.yml`, `renovate.json`, `lefthook.yml`, the
+  CI stub, `.oxfmtrc.jsonc` and `.oxlintrc.devkit.jsonc`) are synced from devkit. Change them
+  there, not here.
+
 <!-- /devkit:agents -->
 
 ## Project
@@ -56,15 +63,19 @@ A server-side BB plugin (TypeScript, Bun for tooling). BB loads `server.ts` thro
 `dist/server.js`; `dist/` is committed because BB's Git installs need the built artifact.
 
 - Install: `bun install --frozen-lockfile`
-- Check: `bun run check` (TypeScript 7, as upstream BB, then `check:knip`: Knip finds unused
-  files and dependencies and unlisted or unresolved imports; `knip.json` skips the built
-  `dist/` and the `bb-app` CLI that `bundle` fetches with `bunx`)
+- Format: `bun run format` (oxfmt). Lint: `bun run lint` (oxlint with the landmines rules).
+- Check: `bun run check` (`format:check` and `lint`, then TypeScript 7, as upstream BB, then
+  `check:knip`: Knip finds unused files and dependencies and unlisted or unresolved imports;
+  `knip.json` skips the built `dist/` and the `bb-app` CLI that `bundle` fetches with `bunx`).
+  oxfmt and oxlint skip the built `dist/`.
 - Test: `bun test` (offline; `test/fake-core.ts` restates BB core's retry and dispatch-hook rules)
 - Build: `bun run bundle` (official `bb-app@0.48.0` CLI; then replaces the
   checkout's absolute path in the source map). Commit `dist/` with every source change; CI does
   not run BB.
 - `src/retry-policy.ts`, `src/retry-contract.ts`, `src/queued-retries.ts` and `src/diagnostics.ts`
-  are unchanged from upstream BB. Keep them so; record any change in `NOTICE`.
+  are unchanged from upstream BB. Keep them so; record any change in `NOTICE`. That is why
+  `.prettierignore` keeps oxfmt off them and `.oxlintrc.json` lets them keep upstream's return
+  types.
 - Never retry, send to or stop real threads from tests. Tests use the fake core only.
 
 ### Release

@@ -22,15 +22,15 @@ export interface ProbeResult {
 
 export type ProbeFn = (target: ProbeTargetId) => Promise<ProbeResult>;
 
-function errorDetail(error: unknown): string {
+function errorDetail(error: unknown) {
   const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
   if (typeof cause?.code === "string") return cause.code;
   if (error instanceof Error) return error.name === "TimeoutError" ? "timeout" : error.message;
   return String(error);
 }
 
-export function createProbe(fetchImpl: typeof fetch = fetch): ProbeFn {
-  return async (target) => {
+export function createProbe(fetchImpl: typeof fetch = fetch) {
+  return async (target: ProbeTargetId) => {
     try {
       const response = await fetchImpl(PROBE_URLS[target], {
         method: "HEAD",

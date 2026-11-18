@@ -174,7 +174,6 @@ workflow that started less than a scan before the restart or while the
 plugin was off, and a workflow BB still shows as running after its process
 died (no evidence that it is dead, so nothing is sent).
 
-
 ## Compatibility
 
 - BB 0.46.1 or later, plugin SDK 0.6.49. Runs on the BB server.
@@ -187,12 +186,12 @@ died (no evidence that it is dead, so nothing is sent).
   may leave from that machine, so a server-side probe is an approximation
   there; a turn that fails again is resumed again at the next scan.
 
-
 ## Development and tests
 
 ```sh
 bun install --frozen-lockfile
-bun run check   # TypeScript 7, as upstream, then Knip
+bun run format  # oxfmt
+bun run check   # oxfmt check and oxlint, then TypeScript 7, as upstream, then Knip
 bun test        # bun:test, includes the upstream tests ported from vitest
 bun run bundle   # official bb-app 0.48.0; build SDK 0.6.94
 ```
@@ -207,4 +206,21 @@ pass of bb 0.46.1), so the tests check behavior against core's rules rather
 than against the plugin. It is not core: it has no admission lock, no claimed
 rows and no provider, so it cannot prove concurrency guarantees.
 `test/review-cases.test.ts` keeps the independent review's failing cases.
+`test/setup.ts` stands in for `better-sqlite3`, which the SDK test host
+imports for `bb.storage.database()`: Bun cannot load that native module, and
+this plugin only uses `bb.storage.kv`.
 
+Rules the code relies on:
+
+- The `message.dispatch` hook decides from in-memory copies of the plugin's
+  storage and of the failed chains it has read, so the only I/O it does is
+  the one indexed read for an interrupted-workflow message. Core runs the
+  hook under its admission lock, so the rows it blocks are deleted after it
+  returns.
+- Every new failure on a thread bumps a counter. A read of the failed turn
+  that started before the bump is thrown away, so a slow read never
+  publishes a chain that a newer failure replaced
+  (`test/reviewer-refresh.test.ts`).
+- The plugin's background checks end with
+  `bb.experimental_hooks.recheck`. Tests wait for that call
+  (`nextRecheck` in `test/fake-core.ts`) instead of sleeping.

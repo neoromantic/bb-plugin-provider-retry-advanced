@@ -8,8 +8,30 @@ Copyright (c) 2026 Michael Yong, released under the MIT License (see LICENSE).
 Unchanged from upstream:
   src/retry-policy.ts, src/retry-contract.ts, src/queued-retries.ts,
   src/diagnostics.ts
-Modified from upstream (marked at the top of each file):
-  server.ts, src/cli.ts, test/stock.test.ts (ported from server.test.ts)
+Modified from upstream:
+  server.ts: the stock overload/subscription-limit policy runs only for
+    those failures, retries nothing before `arm` or on a held thread, and
+    checks that gate again after the availability lookup; the availability
+    answer is parsed with the schema the host validates with (inferring
+    callRpc's output from it exceeds TypeScript's instantiation depth
+    outside BB's own repository); connectivity (transport) failures are
+    recovered by a fixed 60s scan that probes the provider path and asks
+    core to retry natively; a message.dispatch hook stops this plugin's
+    queued retries after a hold, cancel, stop or newer failure; a
+    stalled-turn watchdog and two follow-ups (continuation check,
+    unfinished request) keep stalled work moving without a person nudging
+    it.
+  src/cli.ts: command name, connectivity recovery, watchdog and follow-up
+    state in `status`, `cancel` also stops recovery of the current failure,
+    new `hold`, `release`, `scan`, `watchdog`.
+  test/stock.test.ts, ported from server.test.ts to bun:test. Fork deltas
+    are limited to: plugin id, the extra transportRecovery setting, the
+    workflow recovery, stalled-turn watchdog and follow-up settings (each
+    off by default), the extra CLI commands, the CLI name, the
+    `connectivity` field in `status --json`, cancel's not-found message,
+    the registered message.dispatch hook and its checks on this plugin's
+    own retries, and every host being armed before load (a fresh, unarmed
+    install retries nothing; see test/recovery.test.ts).
 New in this fork:
   src/transport.ts, src/probe.ts, src/recovery.ts, test/fake-core.ts,
   src/watchdog.ts, src/continuations.ts, src/follow-ups.ts,

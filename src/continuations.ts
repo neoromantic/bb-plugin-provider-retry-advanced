@@ -16,16 +16,20 @@ export const WORKFLOW_TAG = `${OWN_MESSAGE_TAG}: interrupted workflow]`;
 const CHECK_STATE_HINT =
   "Before re-running anything you started (commands, child threads, workflows), check its current state. Resume an interrupted BB workflow with `bb workflows run … --resume <run-id>`; restart an interrupted Claude Code workflow from its last finished step.";
 
-export function stallText(minutes: number): string {
+export function stallText(minutes: number) {
   return `${STALL_TAG} Your previous turn made no progress for ${minutes} minutes and was stopped automatically. Continue the task from where it stopped. ${CHECK_STATE_HINT}`;
 }
 
 export const NUDGE_TEXT = `${NUDGE_TAG} After the automatic retry your turn ended on a note that you would continue, without finishing. Do the next steps of the task now instead of announcing them; end the turn only when the task is done or you are waiting for something specific, and say what. ${CHECK_STATE_HINT}`;
 
-export function unfinishedText(args: { failedAt: number; automation: boolean; accepted: boolean; input: string }): string {
+export function unfinishedText(args: {
+  failedAt: number;
+  automation: boolean;
+  accepted: boolean;
+  input: string;
+}) {
   const what = args.automation ? "an automation run" : "a message";
   const head = `${UNFINISHED_TAG} The request sent at ${new Date(args.failedAt).toISOString().slice(0, 16).replace("T", " ")} UTC (${what}) failed with a provider error before it finished, and later system notifications took its turn, so it was never completed. Finish that request now; check what was already done first. ${CHECK_STATE_HINT}`;
-  // Input the provider never accepted is not in its session: repeat it, as core's own retry does.
   return args.accepted || args.input === "" ? head : `${head}\n\nThe request was:\n\n${args.input}`;
 }
 
@@ -34,7 +38,7 @@ export function unfinishedText(args: { failedAt: number; automation: boolean; ac
  * run by id returns finished agents from cache and re-runs the ones that were
  * still running (checked with Claude Code 2.1.312 after SIGTERM).
  */
-export function workflowText(labels: string[]): string {
+export function workflowText(labels: string[]) {
   const list = labels.join(", ");
   return `${WORKFLOW_TAG} BB restarted while your Claude Code workflow ${list} was still running in the background, and the restart stopped it. First check that run's current status and what its interrupted steps already did outside the session (files, commands, messages, child threads). Then resume that same run with the Workflow tool and \`resumeFromRunId\` set to its run id (from the result of the Workflow call that started it), so agents that already finished return their cached results; agents that were mid-step run again. If the run or its journal is gone, say so and do not create a new run on your own. Then continue the task.`;
 }
@@ -66,11 +70,11 @@ interface RawEvent {
   data: unknown;
 }
 
-function str(value: unknown): string | undefined {
+function str(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
 
-export function parseRequest(event: RawEvent): TurnRequest {
+export function parseRequest(event: RawEvent) {
   const data = (event.data ?? {}) as Record<string, unknown>;
   const input = Array.isArray(data.input) ? (data.input as Array<Record<string, unknown>>) : [];
   const text = input
@@ -90,19 +94,23 @@ export function parseRequest(event: RawEvent): TurnRequest {
         ? null
         : {
             ...(str(exec.model) === undefined ? {} : { model: str(exec.model) }),
-            ...(str(exec.reasoningLevel) === undefined ? {} : { reasoningLevel: str(exec.reasoningLevel) }),
+            ...(str(exec.reasoningLevel) === undefined
+              ? {}
+              : { reasoningLevel: str(exec.reasoningLevel) }),
             ...(str(exec.serviceTier) === undefined ? {} : { serviceTier: str(exec.serviceTier) }),
-            ...(str(exec.permissionMode) === undefined ? {} : { permissionMode: str(exec.permissionMode) }),
+            ...(str(exec.permissionMode) === undefined
+              ? {}
+              : { permissionMode: str(exec.permissionMode) }),
           },
-  };
+  } satisfies TurnRequest;
 }
 
-export function isOwnMessage(request: TurnRequest): boolean {
+export function isOwnMessage(request: TurnRequest) {
   return request.text.startsWith(OWN_MESSAGE_TAG);
 }
 
 /** Core's own retry ("Please continue." or the re-sent input), from this plugin or the bundled policy. */
-export function isAutomaticRetry(request: TurnRequest): boolean {
+export function isAutomaticRetry(request: TurnRequest) {
   return request.retryOfRequestId !== null && request.initiator === "system";
 }
 
@@ -110,9 +118,18 @@ type EventsList = BbPluginApi["sdk"]["threads"]["events"]["list"];
 
 export async function listEvents(
   bb: BbPluginApi,
-  args: { threadId: string; types?: string[]; afterSeq?: number; beforeSeq?: number; order: "asc" | "desc"; limit: number },
-): Promise<RawEvent[]> {
-  const list = bb.sdk.threads.events.list as unknown as (input: Record<string, unknown>) => ReturnType<EventsList>;
+  args: {
+    threadId: string;
+    types?: string[];
+    afterSeq?: number;
+    beforeSeq?: number;
+    order: "asc" | "desc";
+    limit: number;
+  },
+) {
+  const list = bb.sdk.threads.events.list as unknown as (
+    input: Record<string, unknown>,
+  ) => ReturnType<EventsList>;
   return (await list({
     threadId: args.threadId,
     ...(args.types === undefined ? {} : { types: args.types }),
@@ -123,28 +140,52 @@ export async function listEvents(
   })) as unknown as RawEvent[];
 }
 
-export async function latestRequest(bb: BbPluginApi, threadId: string): Promise<TurnRequest | null> {
-  const [event] = await listEvents(bb, { threadId, types: ["client/turn/requested"], order: "desc", limit: 1 });
+export async function latestRequest(bb: BbPluginApi, threadId: string) {
+  const [event] = await listEvents(bb, {
+    threadId,
+    types: ["client/turn/requested"],
+    order: "desc",
+    limit: 1,
+  });
   return event === undefined ? null : parseRequest(event);
 }
 
-export async function requestsAfter(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<TurnRequest[]> {
-  return (await listEvents(bb, { threadId, types: ["client/turn/requested"], afterSeq, order: "asc", limit: 100 })).map(parseRequest);
+export async function requestsAfter(bb: BbPluginApi, threadId: string, afterSeq: number) {
+  return (
+    await listEvents(bb, {
+      threadId,
+      types: ["client/turn/requested"],
+      afterSeq,
+      order: "asc",
+      limit: 100,
+    })
+  ).map(parseRequest);
 }
 
-/** Items that are the model's own output, not a tool it runs. */
 const MODEL_ITEM_TYPES = new Set(["agentMessage", "reasoning", "userMessage"]);
 
-function itemOf(event: RawEvent): { id: string; type: string } {
+function itemOf(event: RawEvent) {
   const item = ((event.data ?? {}) as { item?: { id?: unknown; type?: unknown } }).item ?? {};
   return { id: str(item.id) ?? "", type: str(item.type) ?? "unknown" };
 }
 
 /** Types of tool items (commands, tool calls, subagents, compaction…) started after `afterSeq` and not completed. */
-export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<string[]> {
-  const started = await listEvents(bb, { threadId, types: ["item/started"], afterSeq, order: "desc", limit: 50 });
+export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq: number) {
+  const started = await listEvents(bb, {
+    threadId,
+    types: ["item/started"],
+    afterSeq,
+    order: "desc",
+    limit: 50,
+  });
   if (started.length === 0) return [];
-  const completed = await listEvents(bb, { threadId, types: ["item/completed"], afterSeq, order: "desc", limit: 200 });
+  const completed = await listEvents(bb, {
+    threadId,
+    types: ["item/completed"],
+    afterSeq,
+    order: "desc",
+    limit: 200,
+  });
   const done = new Set(completed.map((event) => itemOf(event).id));
   return started
     .map(itemOf)
@@ -153,20 +194,40 @@ export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq:
 }
 
 /** How many tool items (commands, tool calls, subagents…) the turn after `afterSeq` ran; capped at 200. */
-export async function countToolItems(bb: BbPluginApi, threadId: string, afterSeq: number): Promise<number> {
-  const items = await listEvents(bb, { threadId, types: ["item/started", "item/completed"], afterSeq, order: "desc", limit: 200 });
-  return new Set(items.map(itemOf).filter((item) => !MODEL_ITEM_TYPES.has(item.type)).map((item) => item.id)).size;
+export async function countToolItems(bb: BbPluginApi, threadId: string, afterSeq: number) {
+  const items = await listEvents(bb, {
+    threadId,
+    types: ["item/started", "item/completed"],
+    afterSeq,
+    order: "desc",
+    limit: 200,
+  });
+  return new Set(
+    items
+      .map(itemOf)
+      .filter((item) => !MODEL_ITEM_TYPES.has(item.type))
+      .map((item) => item.id),
+  ).size;
 }
 
 /** Child threads still running: a parent that ends its turn while they work is waiting, not stuck. */
-export async function runningChildren(bb: BbPluginApi, threadId: string): Promise<number> {
-  const rows = (await bb.sdk.threads.list({ parentThreadId: threadId, archived: false, includeHidden: true, limit: 200 })) as unknown as Array<{ status: string }>;
+export async function runningChildren(bb: BbPluginApi, threadId: string) {
+  const rows = (await bb.sdk.threads.list({
+    parentThreadId: threadId,
+    archived: false,
+    includeHidden: true,
+    limit: 200,
+  })) as unknown as Array<{ status: string }>;
   return rows.filter((row) => row.status === "active" || row.status === "starting").length;
 }
 
 interface ListRow {
   id: string;
-  activity?: { activeBackgroundAgentCount?: number; activeBackgroundCommandCount?: number; activeWorkflowCount?: number };
+  activity?: {
+    activeBackgroundAgentCount?: number;
+    activeBackgroundCommandCount?: number;
+    activeWorkflowCount?: number;
+  };
 }
 
 /**
@@ -174,19 +235,28 @@ interface ListRow {
  * workflows). A turn waiting on it is not stalled, and stopping the thread
  * would kill that work, so every automatic action here leaves such a thread alone.
  */
-export async function openBackgroundWork(bb: BbPluginApi, threadId: string): Promise<number> {
+export async function openBackgroundWork(bb: BbPluginApi, threadId: string) {
   for (let offset = 0; ; offset += 200) {
-    const page = (await bb.sdk.threads.list({ archived: false, includeHidden: true, limit: 200, offset })) as unknown as ListRow[];
+    const page = (await bb.sdk.threads.list({
+      archived: false,
+      includeHidden: true,
+      limit: 200,
+      offset,
+    })) as unknown as ListRow[];
     const row = page.find((thread) => thread.id === threadId);
     if (row !== undefined) {
       const activity = row.activity ?? {};
-      return (activity.activeBackgroundAgentCount ?? 0) + (activity.activeBackgroundCommandCount ?? 0) + (activity.activeWorkflowCount ?? 0);
+      return (
+        (activity.activeBackgroundAgentCount ?? 0) +
+        (activity.activeBackgroundCommandCount ?? 0) +
+        (activity.activeWorkflowCount ?? 0)
+      );
     }
     if (page.length < 200) return 0;
   }
 }
 
-export async function hasPendingInteraction(bb: BbPluginApi, threadId: string): Promise<boolean> {
+export async function hasPendingInteraction(bb: BbPluginApi, threadId: string) {
   return (await bb.sdk.threads.interactions.list({ threadId })).length > 0;
 }
 
@@ -200,9 +270,11 @@ const PERMISSION_MODES = new Set(["accept-edits", "auto", "full", "workspace-wri
 export async function sendAgentOnly(
   bb: BbPluginApi,
   args: { threadId: string; text: string; execution: Execution | null },
-): Promise<void> {
+) {
   const execution = args.execution ?? {};
-  const send = bb.sdk.threads.send as unknown as (input: Record<string, unknown>) => Promise<unknown>;
+  const send = bb.sdk.threads.send as unknown as (
+    input: Record<string, unknown>,
+  ) => Promise<unknown>;
   await send({
     threadId: args.threadId,
     input: [{ type: "text", text: args.text, mentions: [], visibility: "agent-only" }],

@@ -1,7 +1,3 @@
-// Derived from get-bb/bb plugins/provider-retry/src/cli.ts (MIT, desktop-v0.46.1).
-// Changes: command name, connectivity recovery, watchdog and follow-up state
-// in `status`, `cancel` also stops recovery of the current failure, new
-// `hold`, `release`, `scan`, `watchdog`.
 import { readRetryDiagnostic } from "./diagnostics.js";
 import {
   PluginCliError,
@@ -11,11 +7,7 @@ import {
   type PluginCliContext,
   type PluginCliResult,
 } from "@get-bb/plugin-sdk";
-import {
-  findQueuedRetry,
-  listQueuedRetries,
-  type QueuedRetry,
-} from "./queued-retries.js";
+import { findQueuedRetry, listQueuedRetries, type QueuedRetry } from "./queued-retries.js";
 import type { FollowUpEntry, FollowUps } from "./follow-ups.js";
 import type { ScanEntry, ScanReport, TransportRecovery } from "./recovery.js";
 import type { StallEntry, StallWatchdog, WatchdogReport } from "./watchdog.js";
@@ -39,15 +31,13 @@ const THREAD_ID_POSITIONAL = {
 
 type ThreadCommand = "cancel" | "retry" | "explain" | "hold" | "release";
 
-function textQueuedRetry(queued: QueuedRetry): string {
+function textQueuedRetry(queued: QueuedRetry) {
   const retry =
-    queued.sendAt === null
-      ? "pending"
-      : `retrying ${new Date(queued.sendAt).toISOString()}`;
+    queued.sendAt === null ? "pending" : `retrying ${new Date(queued.sendAt).toISOString()}`;
   return `${queued.threadId}\t${queued.id}\t${retry}`;
 }
 
-function textRecoveryEntry(entry: ScanEntry): string {
+function textRecoveryEntry(entry: ScanEntry) {
   const background =
     entry.openBackgroundTasks !== undefined && entry.openBackgroundTasks > 0
       ? `\t${entry.openBackgroundTasks} background task(s) open`
@@ -55,28 +45,30 @@ function textRecoveryEntry(entry: ScanEntry): string {
   return `${entry.threadId}\t${entry.state}\t${entry.reason}${background}`;
 }
 
-function textStallEntry(entry: StallEntry): string {
+function textStallEntry(entry: StallEntry) {
   return `${entry.threadId}\t${entry.state}\t${entry.reason}\tquiet ${entry.quietMinutes} min`;
 }
 
-function textFollowUp(entry: FollowUpEntry): string {
+function textFollowUp(entry: FollowUpEntry) {
   return `${entry.threadId}\t${entry.kind}\t${entry.action}\t${entry.reason}\t${new Date(entry.at).toISOString()}`;
 }
 
-function watchdogLines(report: WatchdogReport | null, threadId: string | null): string[] {
+function watchdogLines(report: WatchdogReport | null, threadId: string | null) {
   if (report === null) return [];
   if (report.limitMinutes === null) return ["Stall watchdog is off (setting stallWatchdog)."];
-  const entries = report.entries.filter((entry) => threadId === null || entry.threadId === threadId);
+  const entries = report.entries.filter(
+    (entry) => threadId === null || entry.threadId === threadId,
+  );
   const head = `Stall watchdog (${report.limitMinutes} min, ${report.running} running, checked ${new Date(report.at).toISOString()})`;
-  return entries.length === 0 ? [`${head}: nothing stalled.`] : [`${head}:`, ...entries.map(textStallEntry)];
+  return entries.length === 0
+    ? [`${head}: nothing stalled.`]
+    : [`${head}:`, ...entries.map(textStallEntry)];
 }
 
-/** Connectivity entries only: other failures belong to their own policies. */
-function recoveryEntries(report: ScanReport | null, threadId: string | null): ScanEntry[] {
+function recoveryEntries(report: ScanReport | null, threadId: string | null) {
   return (report?.entries ?? []).filter(
     (entry) =>
-      entry.openBackgroundTasks !== undefined &&
-      (threadId === null || entry.threadId === threadId),
+      entry.openBackgroundTasks !== undefined && (threadId === null || entry.threadId === threadId),
   );
 }
 
@@ -84,38 +76,31 @@ function requiredThreadId(
   requested: string | undefined,
   context: PluginCliContext,
   command: ThreadCommand,
-): string {
+) {
   const threadId = requested ?? context.threadId;
   if (threadId === undefined) {
-    throw new PluginCliError(
-      `A thread id is required: bb ${CLI_NAME} ${command} <thread-id>`,
-      { code: "missing_thread_id", exitCode: 2 },
-    );
+    throw new PluginCliError(`A thread id is required: bb ${CLI_NAME} ${command} <thread-id>`, {
+      code: "missing_thread_id",
+      exitCode: 2,
+    });
   }
   return threadId;
 }
 
-function output(json: boolean, value: unknown, text: string): PluginCliResult {
+function output(json: boolean, value: unknown, text: string) {
   return {
     exitCode: 0,
     stdout: json ? `${JSON.stringify(value, null, 2)}\n` : text,
-  };
+  } satisfies PluginCliResult;
 }
 
-async function sendNow(
-  bb: BbPluginApi,
-  threadId: string,
-  json: boolean,
-): Promise<PluginCliResult> {
+async function sendNow(bb: BbPluginApi, threadId: string, json: boolean) {
   const queued = await findQueuedRetry(bb, threadId);
   if (queued === null) {
-    throw new PluginCliError(
-      `No pending provider retry exists for ${threadId}.`,
-      {
-        code: "no_pending_retry",
-        hint: `Run \`bb ${CLI_NAME} status\` for the threads with a pending retry.`,
-      },
-    );
+    throw new PluginCliError(`No pending provider retry exists for ${threadId}.`, {
+      code: "no_pending_retry",
+      hint: `Run \`bb ${CLI_NAME} status\` for the threads with a pending retry.`,
+    });
   }
   await bb.sdk.threads.queuedMessages.send({
     threadId: queued.threadId,
@@ -129,17 +114,12 @@ async function sendNow(
   );
 }
 
-/**
- * Deletes a pending retry row, and stops connectivity recovery of the
- * thread's current failed turn so the next scan does not queue it again.
- * A later, different failure on the thread is eligible again.
- */
 async function cancel(
   bb: BbPluginApi,
   recovery: TransportRecovery,
   threadId: string,
   json: boolean,
-): Promise<PluginCliResult> {
+) {
   const queued = await findQueuedRetry(bb, threadId);
   if (queued !== null) {
     await bb.sdk.threads.queuedMessages.delete({
@@ -147,16 +127,12 @@ async function cancel(
       queuedMessageId: queued.id,
     });
   }
-  // An unknown or non-failed thread simply has no failure to stop.
   const skipped = await recovery.skipCurrentFailure(threadId).catch(() => null);
   if (queued === null && skipped === null) {
-    throw new PluginCliError(
-      `No pending provider retry or failed turn exists for ${threadId}.`,
-      {
-        code: "no_pending_retry",
-        hint: `Run \`bb ${CLI_NAME} status\` for the threads with a pending retry.`,
-      },
-    );
+    throw new PluginCliError(`No pending provider retry or failed turn exists for ${threadId}.`, {
+      code: "no_pending_retry",
+      hint: `Run \`bb ${CLI_NAME} status\` for the threads with a pending retry.`,
+    });
   }
   return output(
     json,
@@ -169,7 +145,7 @@ export function registerProviderRetryCli(
   bb: BbPluginApi,
   recovery: TransportRecovery,
   extras: CliExtras,
-): void {
+) {
   bb.cli.register(
     defineCli({
       name: CLI_NAME,
@@ -189,12 +165,8 @@ export function registerProviderRetryCli(
           ],
           options: { json: JSON_OPTION },
           async run(input, context) {
-            const threadId =
-              input.positionals["thread-id"] ?? context.threadId ?? null;
-            const queued = await listQueuedRetries(
-              bb,
-              threadId === null ? undefined : threadId,
-            );
+            const threadId = input.positionals["thread-id"] ?? context.threadId ?? null;
+            const queued = await listQueuedRetries(bb, threadId === null ? undefined : threadId);
             const report = recovery.lastReport();
             const connectivity = recoveryEntries(report, threadId);
             const watch = extras.watchdog.lastReport();
@@ -208,13 +180,18 @@ export function registerProviderRetryCli(
                 : !report.enabled
                   ? ["Connectivity recovery is off (setting transportRecovery)."]
                   : !report.armed
-                    ? [`Connectivity recovery is observing only until \`bb ${CLI_NAME} arm\`:`, ...connectivity.map(textRecoveryEntry)]
-                  : connectivity.length === 0
-                    ? [`Connectivity recovery: nothing waiting (scanned ${new Date(report.at).toISOString()}).`]
-                    : [
-                        `Connectivity recovery (scanned ${new Date(report.at).toISOString()}):`,
+                    ? [
+                        `Connectivity recovery is observing only until \`bb ${CLI_NAME} arm\`:`,
                         ...connectivity.map(textRecoveryEntry),
-                      ]),
+                      ]
+                    : connectivity.length === 0
+                      ? [
+                          `Connectivity recovery: nothing waiting (scanned ${new Date(report.at).toISOString()}).`,
+                        ]
+                      : [
+                          `Connectivity recovery (scanned ${new Date(report.at).toISOString()}):`,
+                          ...connectivity.map(textRecoveryEntry),
+                        ]),
               ...watchdogLines(watch, threadId),
               ...(followUps.length === 0 ? [] : ["Follow-ups:", ...followUps.map(textFollowUp)]),
             ];
@@ -225,17 +202,26 @@ export function registerProviderRetryCli(
                 watchdog:
                   watch === null
                     ? null
-                    : { ...watch, entries: watch.entries.filter((entry) => threadId === null || entry.threadId === threadId) },
-                followUps: { recent: followUps, pendingUnfinished: extras.followUps.pendingUnfinished() },
-                connectivity: report === null
-                  ? null
-                  : {
-                      enabled: report.enabled,
-                      armed: report.armed,
-                      scannedAt: report.at,
-                      probes: report.probes,
-                      entries: connectivity,
-                    },
+                    : {
+                        ...watch,
+                        entries: watch.entries.filter(
+                          (entry) => threadId === null || entry.threadId === threadId,
+                        ),
+                      },
+                followUps: {
+                  recent: followUps,
+                  pendingUnfinished: extras.followUps.pendingUnfinished(),
+                },
+                connectivity:
+                  report === null
+                    ? null
+                    : {
+                        enabled: report.enabled,
+                        armed: report.armed,
+                        scannedAt: report.at,
+                        probes: report.probes,
+                        entries: connectivity,
+                      },
               },
               `${lines.join("\n")}\n`,
             );
@@ -246,15 +232,10 @@ export function registerProviderRetryCli(
           positionals: [THREAD_ID_POSITIONAL],
           options: { json: JSON_OPTION },
           async run(input, context) {
-            const threadId = requiredThreadId(
-              input.positionals["thread-id"],
-              context,
-              "explain",
-            );
+            const threadId = requiredThreadId(input.positionals["thread-id"], context, "explain");
             const diagnostic = await readRetryDiagnostic(bb, threadId);
             const held = await recovery.isHeld(threadId);
-            if (input.options.json)
-              return output(true, { threadId, diagnostic, held }, "");
+            if (input.options.json) return output(true, { threadId, diagnostic, held }, "");
             if (diagnostic === null)
               return output(
                 false,
@@ -299,7 +280,11 @@ export function registerProviderRetryCli(
           async run(input, context) {
             const threadId = requiredThreadId(input.positionals["thread-id"], context, "hold");
             await recovery.hold(threadId);
-            return output(input.options.json, { ok: true, threadId, held: true }, `Held ${threadId}.\n`);
+            return output(
+              input.options.json,
+              { ok: true, threadId, held: true },
+              `Held ${threadId}.\n`,
+            );
           },
         }),
         release: cliCommand({
@@ -309,7 +294,11 @@ export function registerProviderRetryCli(
           async run(input, context) {
             const threadId = requiredThreadId(input.positionals["thread-id"], context, "release");
             await recovery.release(threadId);
-            return output(input.options.json, { ok: true, threadId, held: false }, `Released ${threadId}.\n`);
+            return output(
+              input.options.json,
+              { ok: true, threadId, held: false },
+              `Released ${threadId}.\n`,
+            );
           },
         }),
         arm: cliCommand({
@@ -330,7 +319,11 @@ export function registerProviderRetryCli(
           options: { json: JSON_OPTION },
           async run(input) {
             const report = await extras.watchdog.check();
-            return output(input.options.json, report, `${watchdogLines(report, null).join("\n")}\n`);
+            return output(
+              input.options.json,
+              report,
+              `${watchdogLines(report, null).join("\n")}\n`,
+            );
           },
         }),
         scan: cliCommand({
