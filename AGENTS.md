@@ -69,6 +69,9 @@ A server-side BB plugin (TypeScript, Bun for tooling). BB loads `server.ts` thro
   `knip.json` skips the built `dist/` and the `bb-app` CLI that `bundle` fetches with `bunx`).
   oxfmt and oxlint skip the built `dist/`.
 - Test: `bun test` (offline; `test/fake-core.ts` restates BB core's retry and dispatch-hook rules)
+- `test/setup.ts` replaces `better-sqlite3`, which Bun cannot load and the plugin never uses, for
+  the SDK test host's import. It is the one module double, a documented exception: see "Test
+  doubles" in `docs/how-it-works.md` before adding or removing one.
 - Build: `bun run bundle` (official `bb-app@0.48.0` CLI; then replaces the
   checkout's absolute path in the source map). Commit `dist/` with every source change; CI does
   not run BB.

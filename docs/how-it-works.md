@@ -200,15 +200,7 @@ The package checks against SDK 0.6.49; the build uses BB 0.48.0's pinned
 esbuild 0.28.1 and emits SDK 0.6.94 metadata. The declared BB minimum remains
 0.46.1; build metadata alone does not prove that minimum's managed install.
 
-`test/fake-core.ts` reimplements the parts of BB core's retry path the plugin
-relies on (from `turn-retry.ts`, `turn-failed.ts` and the `message.dispatch`
-pass of bb 0.46.1), so the tests check behavior against core's rules rather
-than against the plugin. It is not core: it has no admission lock, no claimed
-rows and no provider, so it cannot prove concurrency guarantees.
 `test/review-cases.test.ts` keeps the independent review's failing cases.
-`test/setup.ts` stands in for `better-sqlite3`, which the SDK test host
-imports for `bb.storage.database()`: Bun cannot load that native module, and
-this plugin only uses `bb.storage.kv`.
 
 Rules the code relies on:
 
@@ -224,3 +216,37 @@ Rules the code relies on:
 - The plugin's background checks end with
   `bb.experimental_hooks.recheck`. Tests wait for that call
   (`nextRecheck` in `test/fake-core.ts`) instead of sleeping.
+
+### Test doubles
+
+The tests run the plugin's real code against the SDK's own test host
+(`createFakePluginHost` from `@get-bb/plugin-sdk/testing`). Two things outside
+the plugin are replaced:
+
+- `test/fake-core.ts` reimplements the parts of BB core's retry path the
+  plugin relies on (from `turn-retry.ts`, `turn-failed.ts` and the
+  `message.dispatch` pass of bb 0.46.1), so the tests check behavior against
+  core's rules rather than against the plugin. It is not core: it has no
+  admission lock, no claimed rows and no provider, so it cannot prove
+  concurrency guarantees.
+- `test/setup.ts`, preloaded by `bunfig.toml`, replaces the `better-sqlite3`
+  module with a class whose constructor throws. This is an explicit exception
+  to landmines' `no-test-doubles` rule, kept because no real implementation runs
+  under Bun:
+  - The SDK test host imports `better-sqlite3`, an optional native peer
+    dependency, when it loads, only to back `bb.storage.database()` (SDK
+    0.6.49 and still 0.6.150). Without a `better-sqlite3` module every test
+    file that loads the host fails with `Cannot find package 'better-sqlite3'`.
+  - Bun 1.4 refuses the package's native addon. `new Database(":memory:")`
+    throws `ERR_DLOPEN_FAILED`:
+    `'better-sqlite3' is not yet supported in Bun`. Installing the package
+    makes the import resolve, but adds a native binary download at install
+    time for a database that still cannot open.
+  - The SDK test host has no option to supply another database, such as
+    `bun:sqlite`.
+
+  Nothing the plugin uses is faked. The plugin keeps its state in
+  `bb.storage.kv`, which is the SDK test host's own, and never calls
+  `bb.storage.database()`, so the stand-in's constructor never runs; a call
+  would throw rather than pass. Drop the stand-in when Bun loads
+  `better-sqlite3` or the SDK test host accepts another database.
