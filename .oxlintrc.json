@@ -8,6 +8,12 @@
       "rules": {
         "landmines-types/no-explicit-return-types": "off"
       }
+    },
+    {
+      "files": ["test/setup.ts"],
+      "rules": {
+        "no-restricted-properties": "off"
+      }
     }
   ]
 }
