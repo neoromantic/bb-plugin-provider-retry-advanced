@@ -67,6 +67,8 @@ export interface FakeQueueRow {
   retryOf: { requestId: string; attempt: number };
 }
 
+type HookDecision = { action: string; reason?: string; message?: string; sendAt?: number | null };
+
 export class CoreHttpError extends Error {
   constructor(
     readonly status: number,
@@ -95,7 +97,7 @@ export class FakeCore {
   private turnWaiters = new Map<string, Array<() => void>>();
   now = Date.parse("2026-10-24T05:30:00.000Z");
 
-  addThread(overrides: Partial<Thread> & { id: string; providerId: string }): Thread {
+  addThread(overrides: Partial<Thread> & { id: string; providerId: string }) {
     const { activity, environmentHostId, hasPendingInteraction, ...rest } = overrides;
     const thread: Thread = {
       ...makeThreadResponse({ status: "idle", ...rest }),
@@ -116,17 +118,17 @@ export class FakeCore {
     return thread;
   }
 
-  thread(id: string): Thread {
+  thread(id: string) {
     const thread = this.threads.get(id);
     if (thread === undefined) throw new CoreHttpError(404, "thread_not_found", id);
     return thread;
   }
 
-  setThread(id: string, patch: Partial<Thread>): void {
+  setThread(id: string, patch: Partial<Thread>) {
     this.threads.set(id, { ...this.thread(id), ...patch });
   }
 
-  append(threadId: string, type: string, data: Record<string, unknown>): FakeEvent {
+  append(threadId: string, type: string, data: Record<string, unknown>) {
     const event: FakeEvent = {
       id: `evt_${++this.ids}`,
       seq: ++this.seq,
@@ -151,7 +153,7 @@ export class FakeCore {
       /** Core records who asked: `user` (a person or automation), `agent` (another thread), `system`. */
       initiator?: "user" | "agent" | "system";
     },
-  ): string {
+  ) {
     const requestId = `creq_${String(++this.ids).padStart(10, "0")}`;
     this.append(threadId, "client/turn/requested", {
       requestId,
@@ -182,7 +184,7 @@ export class FakeCore {
     return promise;
   }
 
-  lastRequest(threadId: string): FakeEvent | null {
+  lastRequest(threadId: string) {
     return (
       [...this.events.get(threadId)!].reverse().find((e) => e.type === "client/turn/requested") ??
       null
@@ -193,7 +195,7 @@ export class FakeCore {
   failTurn(
     threadId: string,
     error: { message?: string; detail?: string; errorInfo: Record<string, unknown> | null },
-  ): void {
+  ) {
     this.append(threadId, "provider/error", {
       providerThreadId: this.providerSessions.get(threadId),
       message: error.message ?? "Provider error",
@@ -204,7 +206,7 @@ export class FakeCore {
     this.setThread(threadId, { status: "error" });
   }
 
-  interruptTurn(threadId: string, reason: string, cause?: string): void {
+  interruptTurn(threadId: string, reason: string, cause?: string) {
     this.append(threadId, "system/thread/interrupted", {
       reason,
       ...(cause === undefined ? {} : { cause }),
@@ -214,27 +216,24 @@ export class FakeCore {
     });
   }
 
-  completeTurn(threadId: string): void {
+  completeTurn(threadId: string) {
     this.append(threadId, "turn/completed", { status: "completed" });
     this.setThread(threadId, { status: "idle" });
   }
 
   /** A tool or model item starting inside the running turn. */
-  startItem(threadId: string, type: string): string {
+  startItem(threadId: string, type: string) {
     const id = `item_${++this.ids}`;
     this.append(threadId, "item/started", { item: { id, type, status: "inProgress" } });
     return id;
   }
 
-  completeItem(threadId: string, id: string, type: string): void {
+  completeItem(threadId: string, id: string, type: string) {
     this.append(threadId, "item/completed", { item: { id, type, status: "completed" } });
   }
 
   /** The agent's reply, then the completed turn; returns core's `thread.idle` payload. */
-  reply(
-    threadId: string,
-    text: string,
-  ): { thread: Record<string, unknown>; lastAssistantText: string } {
+  reply(threadId: string, text: string) {
     const id = this.startItem(threadId, "agentMessage");
     this.append(threadId, "item/completed", { item: { id, type: "agentMessage", text } });
     this.completeTurn(threadId);
@@ -242,7 +241,7 @@ export class FakeCore {
   }
 
   /** The public thread DTO (`threads.get`, event payloads). */
-  dto(threadId: string): Record<string, unknown> {
+  dto(threadId: string) {
     const dto: Record<string, unknown> = { ...this.thread(threadId) };
     for (const field of LIST_ONLY_FIELDS) delete dto[field];
     dto.queuedMessageCount = this.queue.filter((row) => row.threadId === threadId).length;
@@ -253,7 +252,7 @@ export class FakeCore {
   stopHangs = false;
 
   /** Claude background work that outlives the failed foreground turn. */
-  startBackgroundTask(threadId: string, taskType: string, workflowName?: string): string {
+  startBackgroundTask(threadId: string, taskType: string, workflowName?: string) {
     const itemId = `item_${++this.ids}`;
     this.append(threadId, "item/started", {
       item: {
@@ -280,7 +279,7 @@ export class FakeCore {
     workflowName: string,
     runId: string,
     resumeFromRunId?: string,
-  ): string {
+  ) {
     const callId = `item_${++this.ids}`;
     const itemId = `item_${++this.ids}`;
     const args =
@@ -320,7 +319,7 @@ export class FakeCore {
     return itemId;
   }
 
-  private countBackgroundTask(threadId: string, taskType: string, delta: number): void {
+  private countBackgroundTask(threadId: string, taskType: string, delta: number) {
     const activity = this.thread(threadId).activity;
     this.setThread(threadId, {
       activity: {
@@ -333,7 +332,7 @@ export class FakeCore {
     });
   }
 
-  private openBackgroundItems(threadId: string): Array<Record<string, unknown>> {
+  private openBackgroundItems(threadId: string) {
     const events = this.events.get(threadId)!;
     const closed = new Set(
       events
@@ -354,7 +353,7 @@ export class FakeCore {
     threadId: string,
     itemId: string,
     taskStatus: "completed" | "failed" | "stopped",
-  ): void {
+  ) {
     const item = this.openBackgroundItems(threadId).find((open) => open.id === itemId)!;
     this.append(threadId, "item/backgroundTask/completed", {
       providerThreadId: this.providerSessions.get(threadId),
@@ -373,7 +372,7 @@ export class FakeCore {
    * replaced (BB restart, host daemon restart) or lost: every task still
    * open is closed as stopped from the item it last stored, no presentation.
    */
-  settleBackgroundTasks(threadId: string): void {
+  settleBackgroundTasks(threadId: string) {
     for (const item of this.openBackgroundItems(threadId)) {
       this.append(threadId, "item/backgroundTask/completed", {
         providerThreadId: this.providerSessions.get(threadId),
@@ -388,8 +387,8 @@ export class FakeCore {
     threadId: string,
     rows: FakeQueueRow[],
     inline: Array<Record<string, unknown>> = [],
-  ): Promise<{ action: string; reason?: string; message?: string; sendAt?: number | null }> {
-    if (this.hook === null) return { action: "proceed" };
+  ) {
+    if (this.hook === null) return { action: "proceed" } as HookDecision;
     const dto: Record<string, unknown> = { ...this.thread(threadId) };
     for (const field of LIST_ONLY_FIELDS) delete dto[field];
     // core's combined input: the rows' content, or the inline message being sent.
@@ -402,11 +401,11 @@ export class FakeCore {
       thread: dto,
       queuedMessages: rows.map((row) => ({ ...row })),
       input: { blocks, text },
-    })) as never;
+    })) as HookDecision;
   }
 
   /** core's queue drain: each eligible row runs the hook pass, then dispatches. */
-  async drain(): Promise<void> {
+  async drain() {
     for (const row of this.queue.slice()) {
       const thread = this.thread(row.threadId);
       if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
@@ -440,7 +439,7 @@ export class FakeCore {
   // --- core retry (turn-retry.ts) -----------------------------------------
   private retriesInFlight = new Set<string>();
 
-  private failedTurn(threadId: string): { request: FakeEvent; accepted: boolean } {
+  private failedTurn(threadId: string) {
     const thread = this.thread(threadId);
     if (thread.status !== "error") {
       throw new CoreHttpError(
@@ -565,7 +564,7 @@ export class FakeCore {
   }
 
   /** Host comes back: core drains the queue (each row through the hook pass). */
-  async setHostOnline(hostId: string, online: boolean): Promise<void> {
+  async setHostOnline(hostId: string, online: boolean) {
     this.hostsOnline.set(hostId, online);
     if (online) await this.drain();
   }

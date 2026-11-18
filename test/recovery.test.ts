@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { createPlugin } from "../server.js";
-import type { ProbeResult } from "../src/probe.js";
 import { SCAN_INTERVAL_MS, runRecoveryLoop, type ScanReport } from "../src/recovery.js";
 import {
   CODEX_HIGH,
@@ -19,7 +18,7 @@ async function setup(options: { reachable?: boolean; onProbe?: () => void; armed
   const core = new FakeCore();
   const probes: string[] = [];
   let reachable = options.reachable ?? true;
-  const probe = async (target: string): Promise<ProbeResult> => {
+  const probe = async (target: string) => {
     probes.push(target);
     options.onProbe?.();
     return reachable
@@ -32,7 +31,7 @@ async function setup(options: { reachable?: boolean; onProbe?: () => void; armed
   core.onRowCancelled = (row) =>
     host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
   if (options.armed !== false) expect((await host.harness.runCli(["arm"])).exitCode).toBe(0);
-  const scan = async (): Promise<ScanReport> => {
+  const scan = async () => {
     const result = await host.harness.runCli(["scan", "--json"]);
     expect(result.exitCode, result.stderr).toBe(0);
     return JSON.parse(result.stdout) as ScanReport;

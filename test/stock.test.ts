@@ -32,7 +32,7 @@ const PLUGIN_ID = "provider-retry-advanced";
 
 type RateLimits = NonNullable<PluginTurnFailedEvent["rateLimits"]>;
 
-function rateLimits(overrides: Partial<RateLimits> = {}): RateLimits {
+function rateLimits(overrides: Partial<RateLimits> = {}) {
   return {
     providerId: "codex",
     status: "blocked",
@@ -49,10 +49,10 @@ function rateLimits(overrides: Partial<RateLimits> = {}): RateLimits {
     overageStatus: null,
     overageReason: null,
     ...overrides,
-  };
+  } satisfies RateLimits;
 }
 
-function failure(overrides: Partial<PluginTurnFailedEvent> = {}): PluginTurnFailedEvent {
+function failure(overrides: Partial<PluginTurnFailedEvent> = {}) {
   return makeTurnFailedEvent({
     threadId: THREAD_ID,
     requestId: REQUEST_ID,
@@ -66,7 +66,7 @@ function failure(overrides: Partial<PluginTurnFailedEvent> = {}): PluginTurnFail
   });
 }
 
-function overloadedFailure(overrides: Partial<PluginTurnFailedEvent> = {}): PluginTurnFailedEvent {
+function overloadedFailure(overrides: Partial<PluginTurnFailedEvent> = {}) {
   return failure({
     errorInfo: {
       category: "overloaded",
@@ -78,7 +78,7 @@ function overloadedFailure(overrides: Partial<PluginTurnFailedEvent> = {}): Plug
   });
 }
 
-function queuedRetry(overrides: Partial<QueueEntry> = {}): QueueEntry {
+function queuedRetry(overrides: Partial<QueueEntry> = {}) {
   return makeQueueEntry({
     id: "queued_1",
     threadId: THREAD_ID,

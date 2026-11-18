@@ -16,7 +16,7 @@ export const WORKFLOW_TAG = `${OWN_MESSAGE_TAG}: interrupted workflow]`;
 const CHECK_STATE_HINT =
   "Before re-running anything you started (commands, child threads, workflows), check its current state. Resume an interrupted BB workflow with `bb workflows run … --resume <run-id>`; restart an interrupted Claude Code workflow from its last finished step.";
 
-export function stallText(minutes: number): string {
+export function stallText(minutes: number) {
   return `${STALL_TAG} Your previous turn made no progress for ${minutes} minutes and was stopped automatically. Continue the task from where it stopped. ${CHECK_STATE_HINT}`;
 }
 
@@ -27,7 +27,7 @@ export function unfinishedText(args: {
   automation: boolean;
   accepted: boolean;
   input: string;
-}): string {
+}) {
   const what = args.automation ? "an automation run" : "a message";
   const head = `${UNFINISHED_TAG} The request sent at ${new Date(args.failedAt).toISOString().slice(0, 16).replace("T", " ")} UTC (${what}) failed with a provider error before it finished, and later system notifications took its turn, so it was never completed. Finish that request now; check what was already done first. ${CHECK_STATE_HINT}`;
   // Input the provider never accepted is not in its session: repeat it, as core's own retry does.
@@ -39,7 +39,7 @@ export function unfinishedText(args: {
  * run by id returns finished agents from cache and re-runs the ones that were
  * still running (checked with Claude Code 2.1.312 after SIGTERM).
  */
-export function workflowText(labels: string[]): string {
+export function workflowText(labels: string[]) {
   const list = labels.join(", ");
   return `${WORKFLOW_TAG} BB restarted while your Claude Code workflow ${list} was still running in the background, and the restart stopped it. First check that run's current status and what its interrupted steps already did outside the session (files, commands, messages, child threads). Then resume that same run with the Workflow tool and \`resumeFromRunId\` set to its run id (from the result of the Workflow call that started it), so agents that already finished return their cached results; agents that were mid-step run again. If the run or its journal is gone, say so and do not create a new run on your own. Then continue the task.`;
 }
@@ -71,11 +71,11 @@ interface RawEvent {
   data: unknown;
 }
 
-function str(value: unknown): string | undefined {
+function str(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
 
-export function parseRequest(event: RawEvent): TurnRequest {
+export function parseRequest(event: RawEvent) {
   const data = (event.data ?? {}) as Record<string, unknown>;
   const input = Array.isArray(data.input) ? (data.input as Array<Record<string, unknown>>) : [];
   const text = input
@@ -103,15 +103,15 @@ export function parseRequest(event: RawEvent): TurnRequest {
               ? {}
               : { permissionMode: str(exec.permissionMode) }),
           },
-  };
+  } satisfies TurnRequest;
 }
 
-export function isOwnMessage(request: TurnRequest): boolean {
+export function isOwnMessage(request: TurnRequest) {
   return request.text.startsWith(OWN_MESSAGE_TAG);
 }
 
 /** Core's own retry ("Please continue." or the re-sent input), from this plugin or the bundled policy. */
-export function isAutomaticRetry(request: TurnRequest): boolean {
+export function isAutomaticRetry(request: TurnRequest) {
   return request.retryOfRequestId !== null && request.initiator === "system";
 }
 
@@ -127,7 +127,7 @@ export async function listEvents(
     order: "asc" | "desc";
     limit: number;
   },
-): Promise<RawEvent[]> {
+) {
   const list = bb.sdk.threads.events.list as unknown as (
     input: Record<string, unknown>,
   ) => ReturnType<EventsList>;
@@ -141,10 +141,7 @@ export async function listEvents(
   })) as unknown as RawEvent[];
 }
 
-export async function latestRequest(
-  bb: BbPluginApi,
-  threadId: string,
-): Promise<TurnRequest | null> {
+export async function latestRequest(bb: BbPluginApi, threadId: string) {
   const [event] = await listEvents(bb, {
     threadId,
     types: ["client/turn/requested"],
@@ -154,11 +151,7 @@ export async function latestRequest(
   return event === undefined ? null : parseRequest(event);
 }
 
-export async function requestsAfter(
-  bb: BbPluginApi,
-  threadId: string,
-  afterSeq: number,
-): Promise<TurnRequest[]> {
+export async function requestsAfter(bb: BbPluginApi, threadId: string, afterSeq: number) {
   return (
     await listEvents(bb, {
       threadId,
@@ -173,17 +166,13 @@ export async function requestsAfter(
 /** Items that are the model's own output, not a tool it runs. */
 const MODEL_ITEM_TYPES = new Set(["agentMessage", "reasoning", "userMessage"]);
 
-function itemOf(event: RawEvent): { id: string; type: string } {
+function itemOf(event: RawEvent) {
   const item = ((event.data ?? {}) as { item?: { id?: unknown; type?: unknown } }).item ?? {};
   return { id: str(item.id) ?? "", type: str(item.type) ?? "unknown" };
 }
 
 /** Types of tool items (commands, tool calls, subagents, compaction…) started after `afterSeq` and not completed. */
-export async function openToolItems(
-  bb: BbPluginApi,
-  threadId: string,
-  afterSeq: number,
-): Promise<string[]> {
+export async function openToolItems(bb: BbPluginApi, threadId: string, afterSeq: number) {
   const started = await listEvents(bb, {
     threadId,
     types: ["item/started"],
@@ -207,11 +196,7 @@ export async function openToolItems(
 }
 
 /** How many tool items (commands, tool calls, subagents…) the turn after `afterSeq` ran; capped at 200. */
-export async function countToolItems(
-  bb: BbPluginApi,
-  threadId: string,
-  afterSeq: number,
-): Promise<number> {
+export async function countToolItems(bb: BbPluginApi, threadId: string, afterSeq: number) {
   const items = await listEvents(bb, {
     threadId,
     types: ["item/started", "item/completed"],
@@ -228,7 +213,7 @@ export async function countToolItems(
 }
 
 /** Child threads still running: a parent that ends its turn while they work is waiting, not stuck. */
-export async function runningChildren(bb: BbPluginApi, threadId: string): Promise<number> {
+export async function runningChildren(bb: BbPluginApi, threadId: string) {
   const rows = (await bb.sdk.threads.list({
     parentThreadId: threadId,
     archived: false,
@@ -252,7 +237,7 @@ interface ListRow {
  * workflows). A turn waiting on it is not stalled, and stopping the thread
  * would kill that work, so every automatic action here leaves such a thread alone.
  */
-export async function openBackgroundWork(bb: BbPluginApi, threadId: string): Promise<number> {
+export async function openBackgroundWork(bb: BbPluginApi, threadId: string) {
   for (let offset = 0; ; offset += 200) {
     const page = (await bb.sdk.threads.list({
       archived: false,
@@ -273,7 +258,7 @@ export async function openBackgroundWork(bb: BbPluginApi, threadId: string): Pro
   }
 }
 
-export async function hasPendingInteraction(bb: BbPluginApi, threadId: string): Promise<boolean> {
+export async function hasPendingInteraction(bb: BbPluginApi, threadId: string) {
   return (await bb.sdk.threads.interactions.list({ threadId })).length > 0;
 }
 
@@ -287,7 +272,7 @@ const PERMISSION_MODES = new Set(["accept-edits", "auto", "full", "workspace-wri
 export async function sendAgentOnly(
   bb: BbPluginApi,
   args: { threadId: string; text: string; execution: Execution | null },
-): Promise<void> {
+) {
   const execution = args.execution ?? {};
   const send = bb.sdk.threads.send as unknown as (
     input: Record<string, unknown>,

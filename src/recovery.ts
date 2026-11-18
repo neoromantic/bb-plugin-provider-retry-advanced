@@ -149,7 +149,7 @@ interface KilledWorkflow extends WorkflowOrigin {
 const RUN_ID = /Run ID: (wf_[A-Za-z0-9-]+)/;
 
 /** This plugin's own interrupted-workflow message, queued or about to be dispatched. */
-function isWorkflowRow(row: QueueRow): boolean {
+function isWorkflowRow(row: QueueRow) {
   return row.content.some((block) => block.type === "text" && block.text.startsWith(WORKFLOW_TAG));
 }
 
@@ -194,7 +194,7 @@ export interface TransportRecovery {
   decideDispatch(context: MessageDispatchHookContext): DispatchDecision | Promise<DispatchDecision>;
 }
 
-function openBackgroundTasks(thread: ThreadRow): number {
+function openBackgroundTasks(thread: ThreadRow) {
   const activity = thread.activity;
   if (activity === undefined) return 0;
   return (
@@ -204,7 +204,7 @@ function openBackgroundTasks(thread: ThreadRow): number {
   );
 }
 
-function errorStatus(error: unknown): { status: number | null; code: string | null } {
+function errorStatus(error: unknown) {
   const value = error as { status?: unknown; code?: unknown } | null;
   return {
     status: typeof value?.status === "number" ? value.status : null,
@@ -218,10 +218,7 @@ export function isOwnRetryRow(row: Pick<QueueRow, "payload">): row is QueueRow &
   return row.payload.kind === "retry" && OWN_RETRY_REASONS.has(row.payload.reason);
 }
 
-export function createTransportRecovery(
-  bb: BbPluginApi,
-  options: TransportRecoveryOptions,
-): TransportRecovery {
+export function createTransportRecovery(bb: BbPluginApi, options: TransportRecoveryOptions) {
   const now = options.now ?? Date.now;
   const failedTurns = new Map<string, FailedTurn>();
   const recorded = new Map<string, string>();
@@ -247,7 +244,7 @@ export function createTransportRecovery(
   let running: Promise<ScanReport> | null = null;
   let last: ScanReport | null = null;
 
-  async function listThreads(): Promise<ThreadRow[]> {
+  async function listThreads() {
     const rows: ThreadRow[] = [];
     for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
       const page = (await bb.sdk.threads.list({
@@ -261,7 +258,7 @@ export function createTransportRecovery(
     }
   }
 
-  async function forgetWorkflow(threadId: string): Promise<void> {
+  async function forgetWorkflow(threadId: string) {
     workflowsSeen.delete(threadId);
     workflowReady.delete(threadId);
     await bb.storage.kv.delete(`workflow:${threadId}`);
@@ -281,10 +278,7 @@ export function createTransportRecovery(
    * `resumeFromRunId`. A run whose id is unknown stays a candidate: names
    * prove nothing, so the message asks to check that task's run first.
    */
-  async function killedWorkflows(
-    threadId: string,
-    record: WorkflowRecord,
-  ): Promise<KilledWorkflow[]> {
+  async function killedWorkflows(threadId: string, record: WorkflowRecord) {
     const killed: KilledWorkflow[] = [];
     for (let before: number | undefined; ;) {
       const page = await listEvents(bb, {
@@ -390,7 +384,7 @@ export function createTransportRecovery(
    * Why the dispatch hook must not let this thread's workflow message through,
    * or null. Reads memory only: the scan and `refreshWorkflow` keep it current.
    */
-  function workflowBlocked(threadId: string): string | null {
+  function workflowBlocked(threadId: string) {
     if (!options.workflowRecovery()) return "setting-off";
     if (!armed) return "not-armed";
     if (held.has(threadId)) return "held";
@@ -415,12 +409,7 @@ export function createTransportRecovery(
   async function checkWorkflow(
     thread: Pick<ThreadRow, "id" | "status" | "originPluginId">,
     record: WorkflowRecord,
-  ): Promise<{
-    state: "ready" | "waiting" | "skipped";
-    reason: string;
-    labels?: string[];
-    seq?: number;
-  }> {
+  ) {
     const [latest] = await listEvents(bb, { threadId: thread.id, order: "desc", limit: 1 });
     const all = await killedWorkflows(thread.id, record);
     const killed = all.filter((run) => run.chain === null || skipped.get(thread.id) !== run.chain);
@@ -485,7 +474,7 @@ export function createTransportRecovery(
   }
 
   /** Before a queued workflow message drains: check again, then let it through or withdraw it. */
-  function refreshWorkflow(threadId: string): void {
+  function refreshWorkflow(threadId: string) {
     const record = workflowsSeen.get(threadId);
     if (record === undefined || refreshing.has(`workflow:${threadId}`)) return;
     refreshing.add(`workflow:${threadId}`);
@@ -509,7 +498,7 @@ export function createTransportRecovery(
     })();
   }
 
-  async function checkWorkflows(threads: ThreadRow[], report: ScanReport): Promise<void> {
+  async function checkWorkflows(threads: ThreadRow[], report: ScanReport) {
     const rows = new Map(threads.map((thread) => [thread.id, thread]));
     for (const thread of threads) {
       if (
@@ -587,8 +576,8 @@ export function createTransportRecovery(
     afterSeq: number;
     beforeSeq?: number;
     order: "asc" | "desc";
-  }): Promise<EventLike | undefined> {
-    const [event] = await bb.sdk.threads.events.list({
+  }) {
+    const [event]: EventLike[] = await bb.sdk.threads.events.list({
       threadId: args.threadId,
       types: args.types as never,
       afterSeq: String(args.afterSeq),
@@ -599,7 +588,7 @@ export function createTransportRecovery(
     return event;
   }
 
-  async function loadFailedTurn(thread: ThreadState): Promise<FailedTurn | null> {
+  async function loadFailedTurn(thread: ThreadState) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const started = generation.get(thread.id) ?? 0;
       const read = await readFailedTurn(thread);
@@ -624,7 +613,7 @@ export function createTransportRecovery(
    * turn (after the previous completion). Cached per request AND terminal
    * event, so a later provider turn under the same request is read afresh.
    */
-  async function readFailedTurn(thread: ThreadState): Promise<FailedTurn | null> {
+  async function readFailedTurn(thread: ThreadState) {
     const [request] = await bb.sdk.threads.events.list({
       threadId: thread.id,
       types: ["client/turn/requested"],
@@ -661,7 +650,7 @@ export function createTransportRecovery(
       originalRequestId: data.retryOfRequestId ?? data.requestId,
     };
     if (terminal === undefined)
-      return { ...base, failure: { kind: "other", reason: "incomplete" } };
+      return { ...base, failure: { kind: "other", reason: "incomplete" } } satisfies FailedTurn;
     if (
       terminal.type === "turn/completed" &&
       (terminal.data as { status?: unknown }).status !== "failed"
@@ -672,13 +661,13 @@ export function createTransportRecovery(
           kind: "other",
           reason: `latest-turn-${String((terminal.data as { status?: unknown }).status)}`,
         },
-      };
+      } satisfies FailedTurn;
     }
     if (terminal.type === "system/thread/interrupted") {
       return {
         ...base,
         failure: classifyFailedTurn({ providerId: thread.providerId, events: [terminal] }),
-      };
+      } satisfies FailedTurn;
     }
     const previous = await latest("turn/completed", terminal.seq);
     const decisive = await firstEvent({
@@ -689,11 +678,14 @@ export function createTransportRecovery(
       order: "desc",
     });
     const events = [decisive, terminal].filter((event): event is EventLike => event !== undefined);
-    return { ...base, failure: classifyFailedTurn({ providerId: thread.providerId, events }) };
+    return {
+      ...base,
+      failure: classifyFailedTurn({ providerId: thread.providerId, events }),
+    } satisfies FailedTurn;
   }
 
   /** Writes the explain diagnostic only when this thread's decision changed. */
-  async function record(entry: ScanEntry, at: number): Promise<void> {
+  async function record(entry: ScanEntry, at: number) {
     if (entry.requestId === null) return;
     const key = `${entry.requestId}:${entry.state}:${entry.reason}`;
     if (recorded.get(entry.threadId) === key) return;
@@ -716,7 +708,7 @@ export function createTransportRecovery(
    * thread's current failed chain is another one, a later turn superseded it.
    * `unknown` means the current chain has not been read yet: wait, never run.
    */
-  function ineligible(args: { threadId: string; status: string; chain: string }): string | null {
+  function ineligible(args: { threadId: string; status: string; chain: string }) {
     if (held.has(args.threadId)) return "held";
     if (skipped.get(args.threadId) === args.chain) return "cancelled";
     if (args.status !== "error") return `thread-${args.status}`;
@@ -727,7 +719,7 @@ export function createTransportRecovery(
   }
 
   /** Reads the thread's current failed chain, then asks core to re-run the hook. */
-  function refresh(threadId: string): void {
+  function refresh(threadId: string) {
     if (refreshing.has(threadId)) return;
     refreshing.add(threadId);
     const started = generation.get(threadId) ?? 0;
@@ -748,7 +740,7 @@ export function createTransportRecovery(
     })();
   }
 
-  async function deleteOwnRows(rows: QueueRow[], why: string): Promise<number> {
+  async function deleteOwnRows(rows: QueueRow[], why: string) {
     let removed = 0;
     for (const row of rows) {
       selfDeleting.add(row.id);
@@ -769,7 +761,7 @@ export function createTransportRecovery(
   }
 
   /** This plugin's queued retries (of `chain` only, when given) and its interrupted-workflow message. */
-  async function withdrawThreadRows(threadId: string, why: string, chain?: string): Promise<void> {
+  async function withdrawThreadRows(threadId: string, why: string, chain?: string) {
     const record = workflowsSeen.get(threadId);
     const rows = (await bb.sdk.threads.queue.list({ threadId })).filter(
       (row) =>
@@ -791,7 +783,7 @@ export function createTransportRecovery(
    * The dispatch hook already blocks such rows at drain time; this removes
    * them from the queue card. Rows from other plugins or users are never touched.
    */
-  async function removeStaleOwnRows(rows: QueueRow[]): Promise<number> {
+  async function removeStaleOwnRows(rows: QueueRow[]) {
     let removed = 0;
     for (const row of rows) {
       if (!isOwnRetryRow(row) || row.state === "claimed") continue;
@@ -810,7 +802,7 @@ export function createTransportRecovery(
     return removed;
   }
 
-  async function doScan(): Promise<ScanReport> {
+  async function doScan() {
     const at = now();
     const report: ScanReport = {
       at,
@@ -919,7 +911,7 @@ export function createTransportRecovery(
    * the attempt reaches the provider (see decideDispatch). Inside the retry
    * core also enforces archive/delete/stopping, the failed turn and dedupe.
    */
-  async function resume(threadId: string, failed: FailedTurn): Promise<string> {
+  async function resume(threadId: string, failed: FailedTurn) {
     const current = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
     if (current.archivedAt !== null || current.deletedAt !== null) return "state-changed:archived";
     if (current.status !== "error") return `state-changed:${current.status}`;
@@ -947,7 +939,7 @@ export function createTransportRecovery(
     }
   }
 
-  async function setSkip(threadId: string, chain: string): Promise<void> {
+  async function setSkip(threadId: string, chain: string) {
     skipped.set(threadId, chain);
     await bb.storage.kv.set(`skip:${threadId}`, {
       originalRequestId: chain,
@@ -1085,7 +1077,7 @@ export function createTransportRecovery(
           };
         }
         return listEvents(bb, { threadId, afterSeq: checkedAt, order: "asc", limit: 1 }).then(
-          ([next]): DispatchDecision => {
+          ([next]) => {
             if (next === undefined) return { action: "proceed" };
             refreshWorkflow(threadId);
             return {
@@ -1142,8 +1134,8 @@ export function createTransportRecovery(
 }
 
 /** Sleeps for `ms` or until `signal` aborts, whichever comes first. */
-export function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
+export function sleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
     if (signal.aborted) return resolve();
     const timer = setTimeout(done, ms);
     function done() {
@@ -1165,7 +1157,7 @@ export async function runRecoveryLoop(args: {
   signal: AbortSignal;
   log: BbPluginApi["log"];
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
-}): Promise<void> {
+}) {
   const wait = args.wait ?? sleep;
   while (!args.signal.aborted) {
     try {

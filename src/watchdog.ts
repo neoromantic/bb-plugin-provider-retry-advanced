@@ -93,7 +93,7 @@ interface ThreadState {
   activeBackgroundAgentCount?: number;
 }
 
-export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptions): StallWatchdog {
+export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptions) {
   const wait =
     options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   let lastWall = options.now();
@@ -108,7 +108,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
    * events and runs no checks, so after a wake every running turn looks
    * silent for hours; counting restarts at the wake instead.
    */
-  function observeClock(): void {
+  function observeClock() {
     const wall = options.now();
     const mono = options.monotonic();
     const wallGap = wall - lastWall;
@@ -122,12 +122,12 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     lastMono = mono;
   }
 
-  async function saveRecord(threadId: string, record: StallRecord): Promise<void> {
+  async function saveRecord(threadId: string, record: StallRecord) {
     records.set(threadId, record);
     await bb.storage.kv.set(`stall:${threadId}`, record);
   }
 
-  async function diagnose(threadId: string, requestId: string, at: number): Promise<void> {
+  async function diagnose(threadId: string, requestId: string, at: number) {
     const diagnostic: RetryDiagnostic = {
       requestId,
       observedAt: at,
@@ -138,7 +138,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
   }
 
   /** Sends the one continue for a stopped turn once the thread is idle; returns what happened. */
-  async function sendContinue(threadId: string, record: StallRecord): Promise<string> {
+  async function sendContinue(threadId: string, record: StallRecord) {
     const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
     if (
       thread.status === "stopping" ||
@@ -175,7 +175,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     return "restarted";
   }
 
-  async function settle(threadId: string): Promise<void> {
+  async function settle(threadId: string) {
     for (let waited = 0; waited < STOP_SETTLE_MS; waited += STOP_POLL_MS) {
       const thread = (await bb.sdk.threads.get({ threadId })) as unknown as ThreadState;
       if (thread.status !== "stopping" && thread.status !== "active") return;
@@ -183,13 +183,13 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     }
   }
 
-  async function quietSince(threadId: string): Promise<{ at: number; seq: number }> {
+  async function quietSince(threadId: string) {
     const [latest] = await listEvents(bb, { threadId, order: "desc", limit: 1 });
     return { at: Math.max(latest?.createdAt ?? 0, countingSince), seq: latest?.seq ?? 0 };
   }
 
   /** Why this quiet running turn must be left alone, or null when it may be restarted. */
-  async function leaveAlone(thread: ThreadState, afterSeq: number): Promise<string | null> {
+  async function leaveAlone(thread: ThreadState, afterSeq: number) {
     if (thread.status !== "active") return `thread-${thread.status}`;
     if (options.isHeld(thread.id)) return "held";
     if (thread.originPluginId === WORKFLOW_ENGINE_PLUGIN_ID) return "workflow-engine-owned";
@@ -204,11 +204,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     return null;
   }
 
-  async function inspect(
-    threadId: string,
-    at: number,
-    limitMs: number,
-  ): Promise<StallEntry | null> {
+  async function inspect(threadId: string, at: number, limitMs: number) {
     const quiet = await quietSince(threadId);
     const quietMs = at - quiet.at;
     if (quietMs < limitMs) return null;
@@ -264,7 +260,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
     return entry;
   }
 
-  async function doCheck(): Promise<WatchdogReport> {
+  async function doCheck() {
     observeClock();
     const at = options.now();
     const limitMs = options.limitMs();
@@ -339,7 +335,7 @@ export function createStallWatchdog(bb: BbPluginApi, options: StallWatchdogOptio
       return running;
     },
     lastReport: () => last,
-  };
+  } satisfies StallWatchdog;
 }
 
 /** Checks every WATCHDOG_INTERVAL_MS until disposal. */
@@ -348,7 +344,7 @@ export async function runWatchdogLoop(args: {
   signal: AbortSignal;
   log: BbPluginApi["log"];
   wait: (ms: number, signal: AbortSignal) => Promise<void>;
-}): Promise<void> {
+}) {
   while (!args.signal.aborted) {
     await args.wait(WATCHDOG_INTERVAL_MS, args.signal);
     if (args.signal.aborted) return;

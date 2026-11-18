@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { PROBE_URLS, createProbe } from "../src/probe.js";
 import { classifyFailedTurn, type EventLike } from "../src/transport.js";
 
-const claudeRetry = (n: number): EventLike => ({
+const claudeRetry = (n: number) => ({
   seq: n,
   type: "provider/error",
   data: {

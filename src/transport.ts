@@ -27,7 +27,7 @@ const PROVIDER_TARGETS: Record<string, ProbeTargetId> = {
   codex: "chatgpt",
 };
 
-export function probeTargetForProvider(providerId: string): ProbeTargetId | null {
+export function probeTargetForProvider(providerId: string) {
   return PROVIDER_TARGETS[providerId] ?? null;
 }
 
@@ -56,11 +56,11 @@ interface ProviderErrorData {
   errorInfo?: { category?: unknown; httpStatusCode?: unknown } | null;
 }
 
-function text(value: unknown): string {
+function text(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
-function isTransportError(data: ProviderErrorData): string | null {
+function isTransportError(data: ProviderErrorData) {
   const category = categoryOf(data);
   if (TRANSPORT_CATEGORIES.has(category)) return category;
   if (!AMBIGUOUS_CATEGORIES.has(category)) return null;
@@ -68,7 +68,7 @@ function isTransportError(data: ProviderErrorData): string | null {
   return match === null ? null : match[0];
 }
 
-function categoryOf(data: ProviderErrorData): string {
+function categoryOf(data: ProviderErrorData) {
   return typeof data.errorInfo?.category === "string" ? data.errorInfo.category : "none";
 }
 
@@ -83,20 +83,28 @@ function categoryOf(data: ProviderErrorData): string {
  * interruption: `host-connection-lost` when the connection dropped, or a bare
  * `host-daemon-restarted` when the machine came back with a new daemon.
  */
-export function classifyFailedTurn(args: {
-  providerId: string;
-  events: readonly EventLike[];
-}): FailureClass {
+export function classifyFailedTurn(args: { providerId: string; events: readonly EventLike[] }) {
   const interrupted = args.events.find((event) => event.type === "system/thread/interrupted");
   if (interrupted !== undefined) {
     const data = (interrupted.data ?? {}) as { reason?: unknown; cause?: unknown };
     if (data.cause === "host-connection-lost") {
-      return { kind: "transport", route: { kind: "host" }, signal: "host-connection-lost" };
+      return {
+        kind: "transport",
+        route: { kind: "host" },
+        signal: "host-connection-lost",
+      } satisfies FailureClass;
     }
     if (data.reason === "host-daemon-restarted") {
-      return { kind: "transport", route: { kind: "host" }, signal: "host-daemon-restarted" };
+      return {
+        kind: "transport",
+        route: { kind: "host" },
+        signal: "host-daemon-restarted",
+      } satisfies FailureClass;
     }
-    return { kind: "other", reason: `interrupted:${text(data.reason) || "unknown"}` };
+    return {
+      kind: "other",
+      reason: `interrupted:${text(data.reason) || "unknown"}`,
+    } satisfies FailureClass;
   }
   const completion = args.events.find(
     (event) =>
@@ -108,11 +116,17 @@ export function classifyFailedTurn(args: {
       event.type === "provider/error" && (completion === undefined || event.seq < completion.seq),
   );
   const decisive = errors.at(-1);
-  if (decisive === undefined) return { kind: "other", reason: "no-provider-error" };
+  if (decisive === undefined)
+    return { kind: "other", reason: "no-provider-error" } satisfies FailureClass;
   const data = (decisive.data ?? {}) as ProviderErrorData;
   const signal = isTransportError(data);
-  if (signal === null) return { kind: "other", reason: `not-transport:${categoryOf(data)}` };
+  if (signal === null)
+    return { kind: "other", reason: `not-transport:${categoryOf(data)}` } satisfies FailureClass;
   const target = probeTargetForProvider(args.providerId);
-  if (target === null) return { kind: "other", reason: `unsupported-provider:${args.providerId}` };
-  return { kind: "transport", route: { kind: "provider", target }, signal };
+  if (target === null)
+    return {
+      kind: "other",
+      reason: `unsupported-provider:${args.providerId}`,
+    } satisfies FailureClass;
+  return { kind: "transport", route: { kind: "provider", target }, signal } satisfies FailureClass;
 }

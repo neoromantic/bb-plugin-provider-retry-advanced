@@ -44,7 +44,7 @@ const MAX_TOOLS_BEFORE_PROMISE = 5;
 const PROMISE_TO_CONTINUE =
   /^[\s*_>"«-]*(?:(?:ок|ok|okay|хорошо|ладно)[,.!]?\s+)?(?:продолж(?:у|аю|им|аем)(?![а-яё])|возобновл(?:яю|ю)(?![а-яё])|continuing\b|resuming\b|i(?:'ll| will) (?:now )?(?:continue|resume|pick)|let me (?:continue|resume|pick)|picking up)/i;
 
-export function looksLikeOnlyAPromise(text: string | null): boolean {
+export function looksLikeOnlyAPromise(text: string | null) {
   if (text === null) return false;
   const trimmed = text.trim();
   return (
@@ -98,27 +98,24 @@ export interface FollowUps {
   pendingUnfinished(): number;
 }
 
-export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions): FollowUps {
+export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions) {
   const unfinished = new Map<string, UnfinishedRecord>();
   const nudged = new Map<string, string>();
   const log: FollowUpEntry[] = [];
 
-  function note(entry: Omit<FollowUpEntry, "at">): void {
+  function note(entry: Omit<FollowUpEntry, "at">) {
     log.push({ at: options.now(), ...entry });
     if (log.length > 50) log.shift();
   }
 
-  async function drop(threadId: string, reason: string): Promise<void> {
+  async function drop(threadId: string, reason: string) {
     unfinished.delete(threadId);
     await bb.storage.kv.delete(`unfinished:${threadId}`);
     note({ threadId, kind: "unfinished", action: "dropped", reason });
   }
 
   /** Whether the failed request's turn failed for a reason the retry policies handle (connectivity, overload, rate limit). */
-  async function retryableFailure(
-    event: PluginTurnFailedEvent,
-    request: TurnRequest,
-  ): Promise<boolean> {
+  async function retryableFailure(event: PluginTurnFailedEvent, request: TurnRequest) {
     if (event.errorInfo?.category === "overloaded" || isRateLimitFailure(event)) return true;
     const thread = (await bb.sdk.threads.get({ threadId: event.threadId })) as unknown as {
       providerId: string;
@@ -163,10 +160,7 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions): Foll
    * only retries the most recent turn, so the request is silently lost. This
    * sends it back once, when the thread is idle. Returns true when it sent.
    */
-  async function followUpUnfinished(
-    thread: IdleThread,
-    record: UnfinishedRecord,
-  ): Promise<boolean> {
+  async function followUpUnfinished(thread: IdleThread, record: UnfinishedRecord) {
     const threadId = thread.id;
     if (options.now() - record.failedAt > UNFINISHED_TTL_MS) {
       await drop(threadId, "expired");
@@ -244,7 +238,7 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions): Foll
    * continue" after at most a few tool calls gets one more continue. Once per
    * continuation turn; this plugin never answers its own nudge.
    */
-  async function checkContinuation(thread: IdleThread, text: string | null): Promise<void> {
+  async function checkContinuation(thread: IdleThread, text: string | null) {
     const threadId = thread.id;
     const request = await latestRequest(bb, threadId);
     if (request === null) return;
@@ -352,5 +346,5 @@ export function createFollowUps(bb: BbPluginApi, options: FollowUpOptions): Foll
     recent: (threadId) =>
       log.filter((entry) => threadId === undefined || entry.threadId === threadId),
     pendingUnfinished: () => unfinished.size,
-  };
+  } satisfies FollowUps;
 }

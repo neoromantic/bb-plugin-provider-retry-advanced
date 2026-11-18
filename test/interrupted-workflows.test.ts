@@ -64,7 +64,7 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
     run: (args: string[]) => host.harness.runCli(args),
     rechecked: () => nextRecheck(host.bb),
     hook: () => host.harness.registrations.hooks["message.dispatch"]!,
-    scan: async (): Promise<ScanReport> => {
+    scan: async () => {
       const result = await host.harness.runCli(["scan", "--json"]);
       expect(result.exitCode, result.stderr).toBe(0);
       core.now += 60_000;
@@ -91,7 +91,7 @@ async function setup(options: { armed?: boolean; workflowRecovery?: boolean } = 
 }
 
 /** A Claude thread whose turn started an UltraCode workflow and then ended; the workflow keeps running. */
-function workflowThread(core: FakeCore, id: string, name = "bb-plugins-page-design"): string {
+function workflowThread(core: FakeCore, id: string, name = "bb-plugins-page-design") {
   core.addThread({ id, providerId: "claude-code" });
   core.startTurn(id, {
     input: [{ type: "text", text: "Design the page", mentions: [] }],
@@ -103,18 +103,14 @@ function workflowThread(core: FakeCore, id: string, name = "bb-plugins-page-desi
 }
 
 /** A workflow killed by a restart, the plugin having seen it running first. */
-async function killed(
-  t: Awaited<ReturnType<typeof setup>>,
-  id: string,
-  name?: string,
-): Promise<void> {
+async function killed(t: Awaited<ReturnType<typeof setup>>, id: string, name?: string) {
   workflowThread(t.core, id, name);
   await t.scan();
   t.core.settleBackgroundTasks(id);
 }
 
 /** A Claude thread whose turn started a workflow run through the Workflow tool, then ended. */
-function workflowRun(core: FakeCore, id: string, name: string, runId: string): void {
+function workflowRun(core: FakeCore, id: string, name: string, runId: string) {
   core.addThread({ id, providerId: "claude-code" });
   core.startTurn(id, {
     input: [{ type: "text", text: "Run it", mentions: [] }],
@@ -125,7 +121,7 @@ function workflowRun(core: FakeCore, id: string, name: string, runId: string): v
 }
 
 /** The message as core would have queued it (behind another plugin's wait, for example). */
-function queueWorkflowMessage(core: FakeCore, threadId: string): void {
+function queueWorkflowMessage(core: FakeCore, threadId: string) {
   const input = [
     {
       type: "text",

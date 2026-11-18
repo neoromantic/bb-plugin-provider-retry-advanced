@@ -28,7 +28,7 @@ const STALL_WATCHDOG_OPTIONS = [
   "60 minutes",
 ] as const;
 
-function stallLimitMs(value: string): number | null {
+function stallLimitMs(value: string) {
   if (value === "Off") return null;
   const minutes = Number.parseInt(value, 10);
   if (!Number.isFinite(minutes) || minutes <= 0) {
@@ -37,7 +37,7 @@ function stallLimitMs(value: string): number | null {
   return minutes * 60_000;
 }
 
-function maximumWaitMs(value: string): number | null {
+function maximumWaitMs(value: string) {
   switch (value) {
     case "6 hours":
       return DEFAULT_MAXIMUM_WAIT_MS;

@@ -35,13 +35,13 @@ const THREAD_ID_POSITIONAL = {
 
 type ThreadCommand = "cancel" | "retry" | "explain" | "hold" | "release";
 
-function textQueuedRetry(queued: QueuedRetry): string {
+function textQueuedRetry(queued: QueuedRetry) {
   const retry =
     queued.sendAt === null ? "pending" : `retrying ${new Date(queued.sendAt).toISOString()}`;
   return `${queued.threadId}\t${queued.id}\t${retry}`;
 }
 
-function textRecoveryEntry(entry: ScanEntry): string {
+function textRecoveryEntry(entry: ScanEntry) {
   const background =
     entry.openBackgroundTasks !== undefined && entry.openBackgroundTasks > 0
       ? `\t${entry.openBackgroundTasks} background task(s) open`
@@ -49,15 +49,15 @@ function textRecoveryEntry(entry: ScanEntry): string {
   return `${entry.threadId}\t${entry.state}\t${entry.reason}${background}`;
 }
 
-function textStallEntry(entry: StallEntry): string {
+function textStallEntry(entry: StallEntry) {
   return `${entry.threadId}\t${entry.state}\t${entry.reason}\tquiet ${entry.quietMinutes} min`;
 }
 
-function textFollowUp(entry: FollowUpEntry): string {
+function textFollowUp(entry: FollowUpEntry) {
   return `${entry.threadId}\t${entry.kind}\t${entry.action}\t${entry.reason}\t${new Date(entry.at).toISOString()}`;
 }
 
-function watchdogLines(report: WatchdogReport | null, threadId: string | null): string[] {
+function watchdogLines(report: WatchdogReport | null, threadId: string | null) {
   if (report === null) return [];
   if (report.limitMinutes === null) return ["Stall watchdog is off (setting stallWatchdog)."];
   const entries = report.entries.filter(
@@ -70,7 +70,7 @@ function watchdogLines(report: WatchdogReport | null, threadId: string | null): 
 }
 
 /** Connectivity entries only: other failures belong to their own policies. */
-function recoveryEntries(report: ScanReport | null, threadId: string | null): ScanEntry[] {
+function recoveryEntries(report: ScanReport | null, threadId: string | null) {
   return (report?.entries ?? []).filter(
     (entry) =>
       entry.openBackgroundTasks !== undefined && (threadId === null || entry.threadId === threadId),
@@ -81,7 +81,7 @@ function requiredThreadId(
   requested: string | undefined,
   context: PluginCliContext,
   command: ThreadCommand,
-): string {
+) {
   const threadId = requested ?? context.threadId;
   if (threadId === undefined) {
     throw new PluginCliError(`A thread id is required: bb ${CLI_NAME} ${command} <thread-id>`, {
@@ -92,14 +92,14 @@ function requiredThreadId(
   return threadId;
 }
 
-function output(json: boolean, value: unknown, text: string): PluginCliResult {
+function output(json: boolean, value: unknown, text: string) {
   return {
     exitCode: 0,
     stdout: json ? `${JSON.stringify(value, null, 2)}\n` : text,
-  };
+  } satisfies PluginCliResult;
 }
 
-async function sendNow(bb: BbPluginApi, threadId: string, json: boolean): Promise<PluginCliResult> {
+async function sendNow(bb: BbPluginApi, threadId: string, json: boolean) {
   const queued = await findQueuedRetry(bb, threadId);
   if (queued === null) {
     throw new PluginCliError(`No pending provider retry exists for ${threadId}.`, {
@@ -129,7 +129,7 @@ async function cancel(
   recovery: TransportRecovery,
   threadId: string,
   json: boolean,
-): Promise<PluginCliResult> {
+) {
   const queued = await findQueuedRetry(bb, threadId);
   if (queued !== null) {
     await bb.sdk.threads.queuedMessages.delete({
@@ -156,7 +156,7 @@ export function registerProviderRetryCli(
   bb: BbPluginApi,
   recovery: TransportRecovery,
   extras: CliExtras,
-): void {
+) {
   bb.cli.register(
     defineCli({
       name: CLI_NAME,

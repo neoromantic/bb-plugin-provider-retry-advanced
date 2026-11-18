@@ -38,7 +38,7 @@ async function setup(options: { armed?: boolean } = {}) {
   core.onRowCancelled = (row) =>
     host.harness.behavior.emitThreadEvent("message.cancelled", { entry: row } as never);
   if (options.armed !== false) expect((await host.harness.runCli(["arm"])).exitCode).toBe(0);
-  const watchdog = async (): Promise<WatchdogReport> => {
+  const watchdog = async () => {
     const result = await host.harness.runCli(["watchdog", "--json"]);
     expect(result.exitCode, result.stderr).toBe(0);
     return JSON.parse(result.stdout) as WatchdogReport;
@@ -48,7 +48,7 @@ async function setup(options: { armed?: boolean } = {}) {
     host,
     watchdog,
     /** Awake time: both clocks move, one check per minute, like the real service. */
-    async awake(minutes: number): Promise<WatchdogReport> {
+    async awake(minutes: number) {
       let report: WatchdogReport | null = null;
       for (let i = 0; i < minutes; i++) {
         core.now += MINUTE;
